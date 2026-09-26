@@ -1,0 +1,56 @@
+[
+ {
+  "key": "[\"POST\",\"http://192.168.1.10:8096/auth\",\"{\\\"user\\\":\\\"ana\\\",\\\"password\\\":\\\"s3cr3t\\\"}\"]",
+  "status": 200,
+  "headers": [
+   [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "44"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "date",
+    "Fri, 25 Sep 2026 23:59:41 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
+   ]
+  ],
+  "body": "eyJ0b2tlbiI6ImJlMzhkY2ViMGJhZDIzYzM4N2Q3OTVkMTk1MDJlMzkyIn0="
+ },
+ {
+  "key": "[\"GET\",\"http://192.168.1.10:8096/items?q=prueba\",null]",
+  "status": 200,
+  "headers": [
+   [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "63"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "date",
+    "Fri, 25 Sep 2026 23:59:41 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
+   ]
+  ],
+  "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fV19"
+ }
+]
