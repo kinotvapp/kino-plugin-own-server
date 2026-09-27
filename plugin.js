@@ -1,9 +1,12 @@
-// Mi servidor -- a Kino plugin for a media server at home (Jellyfin, Emby, a NAS...). The person
-// types its address, user and password in Ajustes > Plugins > Configurar; the address becomes an
-// allowed host for this install only (see README.md, "Why the manifest still declares a host"), so
-// `http://` and a LAN address are both fine here -- that would be refused for any host the plugin
-// declares in its own manifest. A loopback address (127.0.0.1) is refused even here: on a phone it
-// would mean the phone itself, never a real server, so Kino treats it as almost certainly a mistake.
+// Tu servidor -- a Kino plugin for a media server at home (Jellyfin, Emby, a NAS...), and the demo
+// plugin of the whole SDK: every apiVersion 2 feature a server of your own can use is here, each
+// one exercised by a title of the bundled reference server (README.md, "What each title shows").
+//
+// The person types the server's address, user and password in Ajustes > Plugins > Configurar; the
+// address becomes an allowed host for this install only (see README.md, "Why the manifest still
+// declares a host"), so `http://` and a LAN address are both fine here -- that would be refused for
+// any host the plugin declares in its own manifest. A loopback address (127.0.0.1) is refused even
+// here: on a phone it would mean the phone itself, never a real server.
 //
 // Run a real server to try this against: `node server.mjs` (see README.md), then, from your
 // computer's own LAN address (not 127.0.0.1 -- see above):
@@ -11,10 +14,13 @@
 
 const base = () => String(kino.config.get("server")).replace(/\/+$/, "");
 
-// The token belongs to one user on one server: changing either in Configurar starts a fresh one.
-// It does NOT change when only the password changes for the same user@server -- a still-valid
-// token keeps working, exactly like a real session would, until the server itself rejects it.
-const tokenKey = () => "token:" + kino.config.get("user") + "@" + base();
+// Everything cached in kino.storage belongs to one user on one server: storage survives a change
+// in Configurar, so a key without them would hand the old server's answers to the new one.
+const scope = () => kino.config.get("user") + "@" + base();
+
+// The token does NOT change when only the password changes for the same user@server -- a
+// still-valid token keeps working, exactly like a real session would, until the server rejects it.
+const tokenKey = () => "token:" + scope();
 
 async function token() {
   await null;
@@ -43,36 +49,95 @@ async function api(path) {
   return r.json();
 }
 
+const poster = (id) => base() + "/img/" + encodeURIComponent(id);
+
+// `kind` comes from the server: "movie", "series" (one season of a show) or "live" (apiVersion 2).
+// `ids.tmdb` only when the server knows it: Kino then matches the title with TMDB and fills in its
+// info page (cast, director, tagline...).
 const item = (x) => ({
   id: x.id,
   ref: x.id,
   title: x.title,
-  kind: "movie",
+  kind: x.kind,
   year: x.year,
-  poster: base() + "/img/" + encodeURIComponent(x.id),
+  poster: poster(x.id),
+  ids: x.tmdb ? { tmdb: x.tmdb } : undefined,
 });
 
+// Home rows, one per kind; each row's ref is the kind, which browse() pages through.
+const ROWS = [
+  { id: "novedades", title: "Novedades", kind: "movie" },
+  { id: "series", title: "Series", kind: "series" },
+  { id: "en-vivo", title: "En vivo", kind: "live" },
+];
+
+// Home asks the server three times; the answer is kept for 15 minutes with a storage TTL, so
+// opening Kino again right away costs no request. An expired entry reads as null by itself.
+const HOME_TTL_MS = 15 * 60 * 1000;
+
 export async function home() {
-  const p = await api("/items?limit=10");
-  return [{ id: "all", title: "En tu servidor", ref: "all", items: p.items.map(item) }];
+  const key = "home:" + scope();
+  const cached = kino.storage.get(key);
+  if (cached) return JSON.parse(cached);
+  const rows = [];
+  for (const row of ROWS) {
+    const p = await api("/items?limit=10&kind=" + row.kind);
+    if (p.items.length) rows.push({ id: row.id, title: row.title, ref: row.kind, items: p.items.map(item) });
+  }
+  kino.storage.set(key, JSON.stringify(rows), { ttlMs: HOME_TTL_MS });
+  return rows;
 }
 
 export async function browse(ref, cursor) {
-  const p = await api("/items?limit=10" + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
+  const p = await api("/items?limit=10&kind=" + encodeURIComponent(ref) + (cursor ? "&cursor=" + encodeURIComponent(cursor) : ""));
   return { items: p.items.map(item), next: p.next || undefined };
 }
 
+// The server matches ANY word of the query, so "Serie de prueba" also brings "Video de prueba 1".
+// kino.rank turns that into a title search: ask with the title's head, drop the stray-word hits,
+// best match first -- trying every form of the title Kino knows.
 export async function search(query) {
-  return (await api("/items?q=" + encodeURIComponent(query.q))).items.map(item);
+  if (!query.q.trim()) return [];
+  const titles = [query.q, query.originalTitle, ...(query.altTitles || [])].filter(Boolean);
+  const found = (await api("/items?limit=50&q=" + encodeURIComponent(kino.rank.shortQuery(query.q)))).items;
+  const relevant = kino.rank.filterRelevant(found, titles);
+  return kino.rank.sortBySimilarity(relevant, titles).map(item);
 }
 
+// Each season is its own title on this server, so the answer lists every season of the show in
+// `seasons` (the one being answered marked `current`): Kino shows them as chips and calls
+// episodes() again with the chosen season's ref.
+export async function episodes(ref) {
+  const x = await api("/items/" + encodeURIComponent(ref));
+  if (x.kind !== "series") throw kino.error("not_found");
+  return {
+    series: { title: x.show.title, overview: x.show.overview, poster: poster(x.id) },
+    episodes: x.episodes.map((e) => ({ season: x.season, number: e.number, ref: e.id, title: e.title })),
+    seasons: x.seasons.map((s) => ({
+      id: s.id,
+      ref: s.id,
+      title: "Temporada " + s.number,
+      number: s.number,
+      current: s.id === x.id,
+    })),
+  };
+}
+
+// Movies and episodes are progressive mp4 files, so with `download` declared Kino can save them;
+// the live channel is HLS and plays as live (never downloadable). A movie with a separate audio
+// file gets it as an `audioTracks` entry, merged by the player and picked in its audio menu.
 export async function resolve(ref) {
   const x = await api("/items/" + encodeURIComponent(ref));
+  if (x.kind === "live") return { url: base() + x.stream, mime: "application/vnd.apple.mpegurl" };
   const hd = kino.config.get("hd");
-  return {
+  const stream = {
     url: base() + x.stream + (hd ? "?quality=hd" : ""),
     mime: "video/mp4",
     // The token is short-lived server-side (see server.mjs); resolve again once it's stale.
     expiresInSeconds: 600,
   };
+  if (x.audio && x.audio.length) {
+    stream.audioTracks = x.audio.map((a) => ({ lang: a.lang, label: a.label, url: base() + a.stream }));
+  }
+  return stream;
 }

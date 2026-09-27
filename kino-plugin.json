@@ -1,10 +1,12 @@
 {
   "id": "own-server",
-  "name": "Mi servidor",
-  "version": "1.0.0",
-  "apiVersion": 1,
+  "name": "Tu servidor",
+  "version": "1.1.0",
+  "apiVersion": 2,
   "entry": "plugin.js",
-  "description": "A media server at home (Jellyfin, Emby, a NAS...): type its address, user and password.",
+  "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
+  "author": "kinotvapp",
+  "homepage": "https://github.com/kinotvapp/kino-plugin-own-server",
   "hosts": [
     "example.org"
   ],
@@ -12,7 +14,9 @@
     "search",
     "home",
     "browse",
-    "resolve"
+    "episodes",
+    "resolve",
+    "download"
   ],
   "settings": [
     { "key": "server", "label": "Servidor", "type": "url", "required": true, "hint": "http://192.168.1.10:8096" },

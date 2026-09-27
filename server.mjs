@@ -9,17 +9,26 @@
 //   node sdk/run.mjs . --config server=http://192.168.1.10:8096 \
 //   --config user=ana --config password=s3cr3t home
 //
-// Five catalog entries are named after the error they trigger when opened (`resolve`), the same
-// five kino.error() codes the guide documents -- open "Error: limitado" and you get rate_limited,
-// and so on. "Video de prueba 1" is the only one that actually streams (media/video1.mp4, bundled).
+// The catalog exercises every feature of the plugin SDK (README.md, "What each title shows"):
+//   - movies that stream a progressive mp4 (so they can be downloaded), one of them with a TMDB id;
+//   - a movie with a separate audio file (a "dub" the player merges into the video);
+//   - a series whose two seasons are separate titles (the plugin answers `seasons`);
+//   - a live channel: an endless HLS playlist looping six bundled 2-second segments;
+//   - four entries named after the error they trigger when opened, the same kino.error() codes the
+//     guide documents -- open "Error: limitado" and you get rate_limited, and so on.
+//
+// Search is deliberately naive: it matches ANY word of the query (3+ letters), the way many real
+// backends do, so the plugin has something for kino.rank to clean up.
 //
 // Tokens: issued on a correct login and kept until this process exits -- this server never expires
 // or revokes one, so changing only the password in Kino's Configurar screen does NOT by itself force
 // a new login; the still-cached token keeps working (see README.md, "About the bundled token").
+// Media URLs (/stream/*, /live/*, /img/*) need no token: the player fetches them without one.
 
 import { createServer } from "node:http";
 import { createReadStream, statSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -32,15 +41,52 @@ const USER = args.user || "ana";
 const PASSWORD = args.password || "s3cr3t";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const videoPath = join(here, "media", "video1.mp4");
+const media = (name) => join(here, "media", name);
+
+// Progressive files served with Range support: what the player streams and what a download saves.
+const FILES = {
+  v1: { path: media("video1.mp4"), mime: "video/mp4" },
+  "audio-es": { path: media("audio-es.m4a"), mime: "audio/mp4" },
+};
+
+// The live channel: six 2-second MPEG-TS segments (media/live/seg0.ts .. seg5.ts), looped forever.
+const LIVE_SEGMENTS = 6;
+const LIVE_SEGMENT_SECONDS = 2;
+const LIVE_WINDOW = 5;
+
+// One show, two seasons -- each season its own title, the way many servers keep them.
+const SHOWS = {
+  serie: { title: "Serie de prueba", overview: "Una serie de prueba con dos temporadas." },
+};
 
 const CATALOG = [
-  { id: "v1", title: "Video de prueba 1", year: 2024, stream: "/stream/v1" },
-  { id: "err-404", title: "Error: no encontrado", errorStatus: 404 },
-  { id: "err-429", title: "Error: limitado", errorStatus: 429 },
-  { id: "err-451", title: "Error: región", errorStatus: 451 },
-  { id: "err-503", title: "Error: no disponible", errorStatus: 503 },
+  { id: "v1", kind: "movie", title: "Video de prueba 1", year: 2024, stream: "v1" },
+  { id: "bbb", kind: "movie", title: "Big Buck Bunny", year: 2008, tmdb: 10378, stream: "v1" },
+  {
+    id: "doblaje", kind: "movie", title: "Película con doblaje", year: 2025, stream: "v1",
+    audio: [{ lang: "es-419", label: "Español (doblaje de prueba)", file: "audio-es" }],
+  },
+  {
+    id: "serie-t1", kind: "series", title: "Serie de prueba", year: 2025, show: "serie", season: 1,
+    episodes: ["El comienzo", "La prueba", "El final de temporada"],
+  },
+  {
+    id: "serie-t2", kind: "series", title: "Serie de prueba (Temporada 2)", year: 2026, show: "serie", season: 2,
+    episodes: ["El regreso", "Hasta la próxima"],
+  },
+  { id: "canal-1", kind: "live", title: "Canal de prueba" },
+  { id: "err-404", kind: "movie", title: "Error: no encontrado", errorStatus: 404 },
+  { id: "err-429", kind: "movie", title: "Error: limitado", errorStatus: 429 },
+  { id: "err-451", kind: "movie", title: "Error: región", errorStatus: 451 },
+  { id: "err-503", kind: "movie", title: "Error: no disponible", errorStatus: 503 },
 ];
+
+// Every episode, by id ("serie-t1-e2"): playable like a movie.
+const EPISODES = new Map(
+  CATALOG.filter((x) => x.kind === "series").flatMap((s) =>
+    s.episodes.map((title, i) => [`${s.id}-e${i + 1}`, { id: `${s.id}-e${i + 1}`, kind: "episode", title, number: i + 1, stream: "v1" }]),
+  ),
+);
 
 const tokens = new Set();
 
@@ -54,34 +100,90 @@ function authed(req) {
   return tokens.has(req.headers["x-token"]);
 }
 
+const fold = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+const words = (s) => fold(s).split(/[^a-z0-9]+/).filter((w) => w.length >= 3);
+
+// Any shared word is a hit: noisy on purpose (see the header comment).
+function matches(item, q) {
+  const title = new Set(words(item.title));
+  return words(q).some((w) => title.has(w));
+}
+
+// What a listing shows of an entry.
+const summary = ({ id, kind, title, year, tmdb }) => ({ id, kind, title, year, tmdb });
+
+// What opening an entry shows: streams as server paths, a season with its episodes and siblings.
+function detail(x) {
+  if (x.kind === "movie" || x.kind === "episode") {
+    return {
+      id: x.id, kind: x.kind, title: x.title, stream: "/stream/" + x.stream,
+      audio: (x.audio || []).map((a) => ({ lang: a.lang, label: a.label, stream: "/stream/" + a.file })),
+    };
+  }
+  if (x.kind === "live") return { id: x.id, kind: "live", title: x.title, stream: "/live/" + x.id + ".m3u8" };
+  const show = SHOWS[x.show];
+  return {
+    id: x.id, kind: "series", show: { id: x.show, ...show }, season: x.season,
+    episodes: x.episodes.map((title, i) => ({ id: `${x.id}-e${i + 1}`, number: i + 1, title })),
+    seasons: CATALOG.filter((s) => s.show === x.show).map((s) => ({ id: s.id, number: s.season })),
+  };
+}
+
 // A 1x1 placeholder poster, generated once: nobody needs a real image to see the plugin work.
 const PLACEHOLDER_PNG = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
   "base64",
 );
 
-function streamVideo(req, res) {
+function streamFile(req, res, { path, mime }) {
   let size;
   try {
-    size = statSync(videoPath).size;
+    size = statSync(path).size;
   } catch {
-    return json(res, 500, { error: "media/video1.mp4 is missing -- see README.md" });
+    return json(res, 500, { error: path + " is missing -- see README.md" });
   }
   const range = req.headers.range;
   if (!range) {
-    res.writeHead(200, { "Content-Type": "video/mp4", "Content-Length": size, "Accept-Ranges": "bytes" });
-    return createReadStream(videoPath).pipe(res);
+    res.writeHead(200, { "Content-Type": mime, "Content-Length": size, "Accept-Ranges": "bytes" });
+    if (req.method === "HEAD") return res.end();
+    return createReadStream(path).pipe(res);
   }
   const m = /bytes=(\d*)-(\d*)/.exec(range);
-  const start = m[1] ? Number(m[1]) : 0;
-  const end = m[2] ? Number(m[2]) : size - 1;
+  const start = m && m[1] ? Number(m[1]) : 0;
+  const end = m && m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+  if (start >= size || start > end) {
+    res.writeHead(416, { "Content-Range": `bytes */${size}` });
+    return res.end();
+  }
   res.writeHead(206, {
-    "Content-Type": "video/mp4",
+    "Content-Type": mime,
     "Content-Range": `bytes ${start}-${end}/${size}`,
     "Content-Length": end - start + 1,
     "Accept-Ranges": "bytes",
   });
-  createReadStream(videoPath, { start, end }).pipe(res);
+  if (req.method === "HEAD") return res.end();
+  createReadStream(path, { start, end }).pipe(res);
+}
+
+// A live HLS playlist computed from the clock: the newest LIVE_WINDOW segments, never an
+// #EXT-X-ENDLIST, and an #EXT-X-DISCONTINUITY each time the loop starts over (the timestamps reset).
+function livePlaylist(res) {
+  const newest = Math.floor(Date.now() / 1000 / LIVE_SEGMENT_SECONDS);
+  const first = newest - LIVE_WINDOW + 1;
+  const lines = [
+    "#EXTM3U",
+    "#EXT-X-VERSION:3",
+    `#EXT-X-TARGETDURATION:${LIVE_SEGMENT_SECONDS}`,
+    `#EXT-X-MEDIA-SEQUENCE:${first}`,
+    `#EXT-X-DISCONTINUITY-SEQUENCE:${Math.floor(first / LIVE_SEGMENTS)}`,
+  ];
+  for (let seq = first; seq <= newest; seq++) {
+    if (seq !== first && seq % LIVE_SEGMENTS === 0) lines.push("#EXT-X-DISCONTINUITY");
+    lines.push(`#EXTINF:${LIVE_SEGMENT_SECONDS}.000,`, `canal-1/${seq}.ts`);
+  }
+  const buf = Buffer.from(lines.join("\n") + "\n");
+  res.writeHead(200, { "Content-Type": "application/vnd.apple.mpegurl", "Content-Length": buf.length, "Cache-Control": "no-cache" });
+  res.end(buf);
 }
 
 const server = createServer((req, res) => {
@@ -92,8 +194,9 @@ const server = createServer((req, res) => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", () => {
-      const { user, password } = JSON.parse(body || "{}");
-      if (user !== USER || password !== PASSWORD) return json(res, 401, { error: "bad credentials" });
+      let creds = {};
+      try { creds = JSON.parse(body || "{}"); } catch { return json(res, 400, { error: "bad json" }); }
+      if (creds.user !== USER || creds.password !== PASSWORD) return json(res, 401, { error: "bad credentials" });
       const token = randomBytes(16).toString("hex");
       tokens.add(token);
       json(res, 200, { token });
@@ -101,37 +204,59 @@ const server = createServer((req, res) => {
     return;
   }
 
-  if (url.pathname === "/items" && !authed(req)) return json(res, 401, { error: "no token" });
+  const read = req.method === "GET" || req.method === "HEAD";
 
-  if (req.method === "GET" && url.pathname === "/items") {
+  if (read && url.pathname === "/items") {
+    if (!authed(req)) return json(res, 401, { error: "no token" });
     const limit = Number(url.searchParams.get("limit")) || 10;
     const cursor = Number(url.searchParams.get("cursor")) || 0;
-    const q = (url.searchParams.get("q") || "").toLowerCase();
-    const pool = q ? CATALOG.filter((x) => x.title.toLowerCase().includes(q)) : CATALOG;
+    const q = url.searchParams.get("q") || "";
+    const kind = url.searchParams.get("kind");
+    const pool = CATALOG.filter((x) => (!kind || x.kind === kind) && (!q || matches(x, q)));
     const page = pool.slice(cursor, cursor + limit);
     const next = cursor + limit < pool.length ? String(cursor + limit) : undefined;
-    return json(res, 200, { items: page.map(({ id, title, year }) => ({ id, title, year })), next });
+    return json(res, 200, { items: page.map(summary), next });
   }
 
   const itemMatch = /^\/items\/([^/]+)$/.exec(url.pathname);
-  if (req.method === "GET" && itemMatch) {
+  if (read && itemMatch) {
     if (!authed(req)) return json(res, 401, { error: "no token" });
-    const item = CATALOG.find((x) => x.id === decodeURIComponent(itemMatch[1]));
+    const id = decodeURIComponent(itemMatch[1]);
+    const item = CATALOG.find((x) => x.id === id) || EPISODES.get(id);
     if (!item) return json(res, 404, { error: "not found" });
     if (item.errorStatus) return json(res, item.errorStatus, { error: "demo error " + item.errorStatus });
-    return json(res, 200, item);
+    return json(res, 200, detail(item));
   }
 
-  if (req.method === "GET" && url.pathname.startsWith("/img/")) {
+  if (read && url.pathname.startsWith("/img/")) {
     res.writeHead(200, { "Content-Type": "image/png", "Content-Length": PLACEHOLDER_PNG.length });
-    return res.end(PLACEHOLDER_PNG);
+    return res.end(req.method === "HEAD" ? undefined : PLACEHOLDER_PNG);
   }
 
-  if (req.method === "GET" && url.pathname === "/stream/v1") return streamVideo(req, res);
+  const fileMatch = /^\/stream\/([^/]+)$/.exec(url.pathname);
+  if (read && fileMatch && FILES[fileMatch[1]]) return streamFile(req, res, FILES[fileMatch[1]]);
+
+  if (read && url.pathname === "/live/canal-1.m3u8") return livePlaylist(res);
+
+  const segMatch = /^\/live\/canal-1\/(\d+)\.ts$/.exec(url.pathname);
+  if (read && segMatch) {
+    const file = media(`live/seg${Number(segMatch[1]) % LIVE_SEGMENTS}.ts`);
+    return streamFile(req, res, { path: file, mime: "video/mp2t" });
+  }
 
   json(res, 404, { error: "no route" });
 });
 
+// The addresses a phone on the same network can type in Configurar (never 127.0.0.1).
+function lanAddresses() {
+  return Object.values(networkInterfaces())
+    .flat()
+    .filter((i) => i && i.family === "IPv4" && !i.internal)
+    .map((i) => i.address);
+}
+
 server.listen(PORT, () => {
-  console.log(`Mi servidor (reference) listening on http://127.0.0.1:${PORT} -- user "${USER}"`);
+  console.log(`Tu servidor (reference) listening on port ${PORT} -- user "${USER}", password "${PASSWORD}"`);
+  const lan = lanAddresses();
+  if (lan.length) console.log("Type one of these in Kino's Configurar > Servidor: " + lan.map((a) => `http://${a}:${PORT}`).join("  "));
 });
