@@ -19,5 +19,7 @@
     { "key": "user", "label": "Usuario", "type": "text", "required": true },
     { "key": "password", "label": "Contraseña", "type": "password", "required": true },
     { "key": "hd", "label": "Solo HD", "type": "toggle" }
-  ]
+  ],
+  "color": "#1F8A70",
+  "icon": "icon.png"
 }
