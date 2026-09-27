@@ -1,11 +1,12 @@
 {
-  "$comment": "Kino plugin contract, apiVersion 1. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
-  "apiVersion": 1,
-  "maxApiVersion": 1,
+  "$comment": "Kino plugin contract, apiVersion 1 and 2. The single source of truth for every number and rule a plugin meets. The app checks each value against its own code, and a test in the app pins this file to it; sdk/validate.mjs, sdk/run.mjs and the guide's tables read this file.",
+  "apiVersion": 2,
+  "maxApiVersion": 2,
   "capabilities": {
-    "names": ["search", "home", "browse", "episodes", "resolve"],
+    "names": ["search", "home", "browse", "episodes", "resolve", "download", "drm"],
     "required": ["resolve"],
-    "atLeastOneOf": ["search", "home"]
+    "atLeastOneOf": ["search", "home"],
+    "declarative": ["download", "drm"]
   },
   "manifest": {
     "maxBytes": 16384,
@@ -53,6 +54,7 @@
     "maxRowItems": 60,
     "maxBrowseItems": 100,
     "maxEpisodes": 5000,
+    "maxSeasons": 50,
     "maxRefChars": 4096,
     "maxCursorChars": 2048,
     "maxResultChars": 2000000,
@@ -74,7 +76,12 @@
     "maxSeasonNumber": 999,
     "maxEpisodeNumber": 99999,
     "maxSubtitles": 30,
-    "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"]
+    "maxAudioTracks": 8,
+    "maxHeaders": 20,
+    "drmKeys": ["drm", "license", "licenseUrl", "drmLicenseUrl", "keySystem", "widevine"],
+    "drm": { "field": "drm", "types": ["widevine"] },
+    "itemKinds": ["movie", "series", "live"],
+    "liveKindApiVersion": 2
   },
   "search": {
     "types": ["movie", "series", "any"],
@@ -114,7 +121,8 @@
     "maxTotalBytes": 65536
   },
   "storage": {
-    "maxTotalBytes": 262144
+    "maxTotalBytes": 262144,
+    "maxTtlMs": 2592000000
   },
   "crypto": {
     "hashes": ["md5", "sha1", "sha256", "sha512"],

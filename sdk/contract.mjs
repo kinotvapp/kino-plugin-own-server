@@ -50,6 +50,18 @@ export function hostMatches(host, patterns) {
   return patterns.some((p) => (p.startsWith("*.") ? h.endsWith("." + p.slice(2)) : h === p));
 }
 
+/**
+ * The one scheme rule of a declared host (the app's `EffectiveHosts.allowsScheme`): https always;
+ * plain http only on a host the manifest marked `insecureHttp` (apiVersion 2), matched exactly --
+ * never through a `*.` pattern, never a subdomain. A typed server has its own rule (`isUserServer`).
+ */
+export function schemeAllowed(u, manifest) {
+  if (u.protocol === "https:") return true;
+  if (u.protocol !== "http:") return false;
+  const h = String(u.hostname).toLowerCase().replace(/\.$/, "");
+  return (manifest.insecureHosts || []).includes(h);
+}
+
 /** Same checks, same order, same Spanish messages as the app's own manifest validation. Returns { ok, field?, message?, manifest? }. */
 export function validateManifest(text, { knownPermissions = contract.permissions } = {}) {
   const m = contract.manifest;
@@ -69,14 +81,35 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
   if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
   if (!Array.isArray(o.hosts)) return bad("hosts", 'Falta el campo "hosts"');
-  const hosts = o.hosts.map((h) => (typeof h === "string" ? h : ""));
-  if (hosts.length < m.minHosts || hosts.length > m.maxHosts) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
-  const badHost = hosts.find((h) => !isValidHostPattern(h));
-  if (badHost !== undefined) return bad("hosts", `El dominio "${badHost}" no está permitido`);
+  if (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
+  const hostEntries = [];
+  for (const raw of o.hosts) {
+    if (typeof raw === "string") { hostEntries.push({ host: raw, insecure: false }); continue; }
+    if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
+      // The object shape itself -- {host, insecureHttp} -- is apiVersion 2, whatever insecureHttp's
+      // value: a v1 manifest gets the same clear refusal either way.
+      if (o.apiVersion < contract.maxApiVersion) return bad("hosts", `Un host con "insecureHttp" necesita apiVersion ${contract.maxApiVersion}`);
+      hostEntries.push({ host: typeof raw.host === "string" ? raw.host : "", insecure: raw.insecureHttp === true });
+      continue;
+    }
+    hostEntries.push({ host: "", insecure: false });
+  }
+  const badHost = hostEntries.find((e) => !isValidHostPattern(e.host));
+  if (badHost !== undefined) return bad("hosts", `El dominio "${badHost.host}" no está permitido`);
+  // A comodín widens which servers accept plain http far more than one named host: not allowed on
+  // an insecureHttp entry even though it is fine on an https-only one.
+  const wildcardInsecure = hostEntries.find((e) => e.insecure && e.host.startsWith("*."));
+  if (wildcardInsecure !== undefined) return bad("hosts", 'Un host con "insecureHttp" no puede tener comodín ("*.")');
+  const hosts = hostEntries.map((e) => e.host);
+  const insecureHosts = [...new Set(hostEntries.filter((e) => e.insecure).map((e) => e.host))];
   if (!Array.isArray(o.capabilities)) return bad("capabilities", 'Falta el campo "capabilities"');
   const caps = [...new Set(o.capabilities.map((c) => (typeof c === "string" ? c : "")))];
   const unknownCap = caps.find((c) => !contract.capabilities.names.includes(c));
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
+  if (o.apiVersion < contract.maxApiVersion) {
+    const tooNewCap = caps.find((c) => contract.capabilities.declarative.includes(c));
+    if (tooNewCap !== undefined) return bad("capabilities", "Esta capacidad necesita apiVersion 2");
+  }
   const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
   if (missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
   if (!contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {
@@ -92,7 +125,7 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.settings !== undefined && !Array.isArray(o.settings)) return bad("settings", 'El campo "settings" debe ser una lista');
   const settingsError = validateSettings(o.settings || []);
   if (settingsError) return bad("settings", settingsError);
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [] } };
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts } };
 }
 
 function validateSettings(list) {
@@ -188,7 +221,7 @@ function strings(v, max, maxChars) {
   return out;
 }
 
-function items(list, max, { allowSeries, servers }, drop) {
+function items(list, max, { allowSeries, allowLive, servers }, drop) {
   const out = [];
   const seen = new Set();
   (Array.isArray(list) ? list : []).forEach((x, i) => {
@@ -199,8 +232,10 @@ function items(list, max, { allowSeries, servers }, drop) {
     if (typeof x.ref !== "string" || !x.ref || x.ref.length > o().maxRefChars) return drop(`item ${id}: invalid ref`);
     const title = text(x.title, o().maxTitleChars);
     if (!title) return drop(`item ${id}: no title`);
-    if (x.kind !== "movie" && x.kind !== "series") return drop(`item ${id}: invalid kind '${String(x.kind).slice(0, 20)}'`);
+    if (!o().itemKinds.includes(x.kind)) return drop(`item ${id}: invalid kind '${String(x.kind).slice(0, 20)}'`);
     if (x.kind === "series" && !allowSeries) return drop(`item ${id}: series without the episodes capability`);
+    // Silently, like any invalid item: an apiVersion 1 plugin never declared it could go live.
+    if (x.kind === "live" && !allowLive) return drop(`item ${id}: live needs apiVersion ${o().liveKindApiVersion}`);
     if (x.adult === true) return drop(`item ${id}: adult, dropped`);
     if (seen.has(id)) return;
     seen.add(id);
@@ -212,7 +247,8 @@ function items(list, max, { allowSeries, servers }, drop) {
       originalTitle: text(x.originalTitle, o().maxTitleChars),
       genres: strings(x.genres, o().maxGenres, o().maxGenreChars),
       rating: typeof x.rating === "number" && x.rating >= o().minRating && x.rating <= o().maxRating ? x.rating : null,
-      runtimeMinutes: Number.isInteger(x.runtimeMinutes) && x.runtimeMinutes >= o().minRuntimeMinutes && x.runtimeMinutes <= o().maxRuntimeMinutes ? x.runtimeMinutes : 0,
+      // A channel has no length: whatever the plugin put there is ignored, never shown.
+      runtimeMinutes: x.kind !== "live" && Number.isInteger(x.runtimeMinutes) && x.runtimeMinutes >= o().minRuntimeMinutes && x.runtimeMinutes <= o().maxRuntimeMinutes ? x.runtimeMinutes : 0,
       tmdb: Number.isInteger(ids.tmdb) && ids.tmdb > 0 ? ids.tmdb : 0,
       imdb: typeof ids.imdb === "string" && re(o().imdbPattern).test(ids.imdb) ? ids.imdb : "",
       badges: strings(x.badges, o().maxBadges, o().maxBadgeChars),
@@ -272,25 +308,82 @@ function episodes(value, drop) {
     seen.add(key);
     eps.push({ season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars), airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "" });
   });
-  return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps };
+  return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps, seasons: seasons(value, drop) };
 }
 
-function stream(value, { hosts, servers }) {
+/** The optional sibling `seasons` of an episodes answer, read as the app reads them (PluginOutput.seasonsOf). */
+function seasons(value, drop) {
+  if (!("seasons" in value) || value.seasons === undefined) return [];
+  if (!Array.isArray(value.seasons)) { drop("seasons: not a list, ignored"); return []; }
+  const seen = new Set();
+  const out = [];
+  value.seasons.forEach((s, i) => {
+    if (out.length >= o().maxSeasons) { drop(`seasons: beyond ${o().maxSeasons} dropped`); return; }
+    if (s === null || typeof s !== "object" || Array.isArray(s)) return;
+    const id = typeof s.id === "number" ? String(s.id) : s.id;
+    if (typeof id !== "string" || !re(o().itemIdPattern).test(id)) return drop(`seasons: #${i} has an invalid id`);
+    if (typeof s.ref !== "string" || !s.ref || s.ref.length > o().maxRefChars) return drop(`seasons: ${id} has no valid ref`);
+    const title = text(s.title, o().maxTitleChars);
+    if (!title) return drop(`seasons: ${id} has no title`);
+    if (seen.has(id)) return drop(`seasons: duplicate ${id} dropped`);
+    seen.add(id);
+    const number = Number.isInteger(s.number) && s.number >= 1 && s.number <= o().maxSeasonNumber ? s.number : 0;
+    out.push({ id, ref: s.ref, title, number, current: s.current === true });
+  });
+  return out;
+}
+
+/** Up to `maxHeaders` request headers as the app keeps them: a token name, none of the forbidden ones, a string value with no line break. */
+const HEADER_NAME = /^[A-Za-z0-9-]{1,64}$/;
+const FORBIDDEN_HEADERS = ["host", "content-length", "transfer-encoding", "connection"];
+function headersOf(h) {
+  const out = {};
+  if (h === null || typeof h !== "object" || Array.isArray(h)) return out;
+  for (const k of Object.keys(h)) {
+    if (Object.keys(out).length >= o().maxHeaders) break;
+    const v = h[k];
+    if (typeof v !== "string" || !HEADER_NAME.test(k) || FORBIDDEN_HEADERS.includes(k.toLowerCase())) continue;
+    if (v.length > 4096 || v.includes("\n") || v.includes("\r")) continue;
+    out[k] = v;
+  }
+  return out;
+}
+
+/**
+ * The optional `drm` block, read ONLY for a plugin that declares the capability (`allowDrm`) and
+ * when it is the only DRM-shaped key present; any other of `drmKeys` refuses the stream as it
+ * always did. Mirrors the app's PluginOutput.drmOf, message for message.
+ */
+function drmOf(value, check, allowDrm) {
+  const present = o().drmKeys.filter((k) => k in value);
+  if (present.length === 0) return null;
+  if (!allowDrm || present.length !== 1 || present[0] !== o().drm.field) throw new Error("El video tiene DRM y los plugins no lo soportan");
+  const d = value[o().drm.field];
+  if (d === null || typeof d !== "object" || Array.isArray(d)) throw new Error("El DRM del video no es válido");
+  if (!o().drm.types.includes(d.type)) throw new Error("El video usa un DRM que Kino no soporta");
+  check(d.licenseUrl, "La licencia del video");
+  return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
+}
+
+function stream(value, { manifest, servers, allowDrm }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
-  if (o().drmKeys.some((k) => k in value)) throw new Error("El video tiene DRM y los plugins no lo soportan");
   const check = (url, what) => {
     let u;
     try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
     if (servers.some((s) => sameServer(s, u))) return;
-    if (u.protocol !== "https:") throw new Error(`${what} debe usar https`);
-    if (!hostMatches(u.hostname, hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
+    if (!schemeAllowed(u, manifest)) throw new Error(`${what} debe usar https`);
+    if (!hostMatches(u.hostname, manifest.hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
   };
+  const drm = drmOf(value, check, allowDrm);
   check(value.url, "El video");
   const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
   const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
     try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
   });
-  return { ...value, subtitles, expiresInSeconds: expires };
+  const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
+    try { check(a && a.url, "El audio"); return true; } catch { return false; }
+  });
+  return { ...value, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm };
 }
 
 /**
@@ -301,7 +394,13 @@ function stream(value, { hosts, servers }) {
 export function checkOutput(fn, value, manifest, servers = []) {
   const drops = [];
   const drop = (m) => { drops.push(m); };
-  const ctx = { allowSeries: manifest.capabilities.includes("episodes"), allowNext: manifest.capabilities.includes("browse"), servers };
+  const ctx = {
+    allowSeries: manifest.capabilities.includes("episodes"),
+    allowNext: manifest.capabilities.includes("browse"),
+    // Live channels are apiVersion 2: a v1 plugin's live item is dropped like any invalid one.
+    allowLive: Number.isInteger(manifest.apiVersion) && manifest.apiVersion >= o().liveKindApiVersion,
+    servers,
+  };
   const json = JSON.stringify(value === undefined ? null : value);
   if (json.length > o().maxResultChars) throw new Error("respuesta del plugin demasiado grande (más de 2 millones de caracteres)");
   const parsed = JSON.parse(json);
@@ -310,7 +409,8 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "browse": return { value: page(parsed, o().maxBrowseItems, { ...ctx, allowNext: true }, drop), drops };
     case "home": return { value: rows(parsed, ctx, drop), drops };
     case "episodes": return { value: episodes(parsed, drop), drops };
-    case "resolve": return { value: stream(parsed, { hosts: manifest.hosts, servers }), drops };
+    // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
+    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
     default: throw new Error(`unknown function ${fn}`);
   }
 }
