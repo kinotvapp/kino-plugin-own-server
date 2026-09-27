@@ -6,6 +6,7 @@ import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { validate } from "../sdk/validate.mjs";
+import { artwork } from "../artwork.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const fixtures = join(root, "test", "fixtures.json");
@@ -48,6 +49,26 @@ test("home: movies (one with a TMDB id), series and a live channel", { skip }, a
   assert.deepEqual(rows[2].items.map((x) => [x.id, x.kind]), [["canal-1", "live"]]);
 });
 
+test("every card points at its own poster and backdrop on the typed server", { skip }, async () => {
+  const rows = await run("home");
+  const bbb = rows[0].items.find((x) => x.id === "bbb");
+  assert.equal(bbb.poster, server + "/img/poster/bbb.png");
+  assert.equal(bbb.backdrop, server + "/img/backdrop/bbb.png");
+});
+
+// The PNG's width and height, straight from its IHDR chunk.
+const size = (png) => [png.readUInt32BE(16), png.readUInt32BE(20)];
+
+test("artwork: a 2:3 poster and a 16:9 backdrop, the same bytes every time, different per title", () => {
+  const a = artwork({ id: "doblaje", title: "Película con doblaje", label: "Pelicula", shape: "poster" });
+  assert.deepEqual([...a.subarray(1, 4)].map((c) => String.fromCharCode(c)).join(""), "PNG");
+  assert.deepEqual(size(a), [300, 450]);
+  const b = artwork({ id: "serie-t1-e3", title: "El final de temporada", label: "T1 - Episodio 3", shape: "backdrop" });
+  assert.deepEqual(size(b), [480, 270]);
+  assert.ok(a.equals(artwork({ id: "doblaje", title: "Película con doblaje", label: "Pelicula", shape: "poster" })));
+  assert.ok(!a.equals(artwork({ id: "bbb", title: "Big Buck Bunny", label: "Pelicula", shape: "poster" })));
+});
+
 test("episodes lists the season's episodes and every season of the show", { skip }, async () => {
   const out = await run("episodes", "serie-t1");
   assert.deepEqual(out.episodes.map((e) => [e.season, e.number, e.ref]), [[1, 1, "serie-t1-e1"], [1, 2, "serie-t1-e2"], [1, 3, "serie-t1-e3"]]);
@@ -56,7 +77,7 @@ test("episodes lists the season's episodes and every season of the show", { skip
 
 test("a movie with a separate audio file resolves with audioTracks", { skip }, async () => {
   const s = await run("resolve", "doblaje");
-  assert.equal(s.url, server + "/stream/v1");
+  assert.equal(s.url, server + "/stream/doblaje");
   assert.equal(s.mime, "video/mp4");
   assert.deepEqual(s.audioTracks, [{ lang: "es-419", label: "Español (doblaje de prueba)", url: server + "/stream/audio-es" }]);
 });

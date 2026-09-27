@@ -4,19 +4,78 @@
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "44"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
-  "body": "eyJ0b2tlbiI6IjU0Yzk5MTFiMjA5OTViNGM4NDhkNGZiNzliMTM5NTVhIn0="
+  "body": "eyJ0b2tlbiI6IjMyZWI3NTJmNjY1ODIyNDMzMzhlMzQ1YmYyNWUzZDY5In0="
  },
  {
   "key": "[\"GET\",\"http://192.168.1.10:8096/items?limit=50&q=prueba\",null]",
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "293"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
+   ]
+  ],
+  "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fSx7ImlkIjoic2VyaWUtdDEiLCJraW5kIjoic2VyaWVzIiwidGl0bGUiOiJTZXJpZSBkZSBwcnVlYmEiLCJ5ZWFyIjoyMDI1fSx7ImlkIjoic2VyaWUtdDIiLCJraW5kIjoic2VyaWVzIiwidGl0bGUiOiJTZXJpZSBkZSBwcnVlYmEgKFRlbXBvcmFkYSAyKSIsInllYXIiOjIwMjZ9LHsiaWQiOiJjYW5hbC0xIiwia2luZCI6ImxpdmUiLCJ0aXRsZSI6IkNhbmFsIGRlIHBydWViYSJ9XX0="
+ },
+ {
+  "key": "[\"GET\",\"http://192.168.1.10:8096/items?limit=50&q=Serie%20de%20prueba\",null]",
+  "status": 200,
+  "headers": [
+   [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "293"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
   "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fSx7ImlkIjoic2VyaWUtdDEiLCJraW5kIjoic2VyaWVzIiwidGl0bGUiOiJTZXJpZSBkZSBwcnVlYmEiLCJ5ZWFyIjoyMDI1fSx7ImlkIjoic2VyaWUtdDIiLCJraW5kIjoic2VyaWVzIiwidGl0bGUiOiJTZXJpZSBkZSBwcnVlYmEgKFRlbXBvcmFkYSAyKSIsInllYXIiOjIwMjZ9LHsiaWQiOiJjYW5hbC0xIiwia2luZCI6ImxpdmUiLCJ0aXRsZSI6IkNhbmFsIGRlIHBydWViYSJ9XX0="
@@ -26,8 +85,24 @@
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "473"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
   "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fSx7ImlkIjoiYmJiIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJCaWcgQnVjayBCdW5ueSIsInllYXIiOjIwMDgsInRtZGIiOjEwMzc4fSx7ImlkIjoiZG9ibGFqZSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiUGVsw61jdWxhIGNvbiBkb2JsYWplIiwieWVhciI6MjAyNX0seyJpZCI6ImVyci00MDQiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IkVycm9yOiBubyBlbmNvbnRyYWRvIn0seyJpZCI6ImVyci00MjkiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IkVycm9yOiBsaW1pdGFkbyJ9LHsiaWQiOiJlcnItNDUxIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJFcnJvcjogcmVnacOzbiJ9LHsiaWQiOiJlcnItNTAzIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJFcnJvcjogbm8gZGlzcG9uaWJsZSJ9XX0="
@@ -37,8 +112,24 @@
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "169"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
   "body": "eyJpdGVtcyI6W3siaWQiOiJzZXJpZS10MSIsImtpbmQiOiJzZXJpZXMiLCJ0aXRsZSI6IlNlcmllIGRlIHBydWViYSIsInllYXIiOjIwMjV9LHsiaWQiOiJzZXJpZS10MiIsImtpbmQiOiJzZXJpZXMiLCJ0aXRsZSI6IlNlcmllIGRlIHBydWViYSAoVGVtcG9yYWRhIDIpIiwieWVhciI6MjAyNn1dfQ=="
@@ -48,8 +139,24 @@
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "68"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
   "body": "eyJpdGVtcyI6W3siaWQiOiJjYW5hbC0xIiwia2luZCI6ImxpdmUiLCJ0aXRsZSI6IkNhbmFsIGRlIHBydWViYSJ9XX0="
@@ -59,8 +166,24 @@
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "398"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
   "body": "eyJpZCI6InNlcmllLXQxIiwia2luZCI6InNlcmllcyIsInNob3ciOnsiaWQiOiJzZXJpZSIsInRpdGxlIjoiU2VyaWUgZGUgcHJ1ZWJhIiwib3ZlcnZpZXciOiJVbmEgc2VyaWUgZGUgcHJ1ZWJhIGNvbiBkb3MgdGVtcG9yYWRhcy4ifSwic2Vhc29uIjoxLCJlcGlzb2RlcyI6W3siaWQiOiJzZXJpZS10MS1lMSIsIm51bWJlciI6MSwidGl0bGUiOiJFbCBjb21pZW56byJ9LHsiaWQiOiJzZXJpZS10MS1lMiIsIm51bWJlciI6MiwidGl0bGUiOiJMYSBwcnVlYmEifSx7ImlkIjoic2VyaWUtdDEtZTMiLCJudW1iZXIiOjMsInRpdGxlIjoiRWwgZmluYWwgZGUgdGVtcG9yYWRhIn1dLCJzZWFzb25zIjpbeyJpZCI6InNlcmllLXQxIiwibnVtYmVyIjoxfSx7ImlkIjoic2VyaWUtdDIiLCJudW1iZXIiOjJ9XX0="
@@ -70,32 +193,53 @@
   "status": 200,
   "headers": [
    [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "185"
+   ],
+   [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:09 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
-  "body": "eyJpZCI6ImRvYmxhamUiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IlBlbMOtY3VsYSBjb24gZG9ibGFqZSIsInN0cmVhbSI6Ii9zdHJlYW0vdjEiLCJhdWRpbyI6W3sibGFuZyI6ImVzLTQxOSIsImxhYmVsIjoiRXNwYcOxb2wgKGRvYmxhamUgZGUgcHJ1ZWJhKSIsInN0cmVhbSI6Ii9zdHJlYW0vYXVkaW8tZXMifV19"
+  "body": "eyJpZCI6ImRvYmxhamUiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IlBlbMOtY3VsYSBjb24gZG9ibGFqZSIsInN0cmVhbSI6Ii9zdHJlYW0vZG9ibGFqZSIsImF1ZGlvIjpbeyJsYW5nIjoiZXMtNDE5IiwibGFiZWwiOiJFc3Bhw7FvbCAoZG9ibGFqZSBkZSBwcnVlYmEpIiwic3RyZWFtIjoiL3N0cmVhbS9hdWRpby1lcyJ9XX0="
  },
  {
   "key": "[\"GET\",\"http://192.168.1.10:8096/items/canal-1\",null]",
   "status": 200,
   "headers": [
    [
-    "content-type",
-    "application/json"
-   ]
-  ],
-  "body": "eyJpZCI6ImNhbmFsLTEiLCJraW5kIjoibGl2ZSIsInRpdGxlIjoiQ2FuYWwgZGUgcHJ1ZWJhIiwic3RyZWFtIjoiL2xpdmUvY2FuYWwtMS5tM3U4In0="
- },
- {
-  "key": "[\"GET\",\"http://192.168.1.10:8096/items?limit=50&q=Serie%20de%20prueba\",null]",
-  "status": 200,
-  "headers": [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "86"
+   ],
    [
     "content-type",
     "application/json"
+   ],
+   [
+    "date",
+    "Sun, 27 Sep 2026 22:25:10 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
    ]
   ],
-  "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fSx7ImlkIjoic2VyaWUtdDEiLCJraW5kIjoic2VyaWVzIiwidGl0bGUiOiJTZXJpZSBkZSBwcnVlYmEiLCJ5ZWFyIjoyMDI1fSx7ImlkIjoic2VyaWUtdDIiLCJraW5kIjoic2VyaWVzIiwidGl0bGUiOiJTZXJpZSBkZSBwcnVlYmEgKFRlbXBvcmFkYSAyKSIsInllYXIiOjIwMjZ9LHsiaWQiOiJjYW5hbC0xIiwia2luZCI6ImxpdmUiLCJ0aXRsZSI6IkNhbmFsIGRlIHBydWViYSJ9XX0="
+  "body": "eyJpZCI6ImNhbmFsLTEiLCJraW5kIjoibGl2ZSIsInRpdGxlIjoiQ2FuYWwgZGUgcHJ1ZWJhIiwic3RyZWFtIjoiL2xpdmUvY2FuYWwtMS5tM3U4In0="
  }
 ]

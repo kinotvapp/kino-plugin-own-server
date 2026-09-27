@@ -1,14 +1,14 @@
 {
   "id": "own-server",
   "name": "Tu servidor",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "apiVersion": 2,
   "entry": "plugin.js",
   "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
   "author": "kinotvapp",
   "homepage": "https://github.com/kinotvapp/kino-plugin-own-server",
   "hosts": [
-    "example.org"
+    "tu-servidor.invalid"
   ],
   "capabilities": [
     "search",

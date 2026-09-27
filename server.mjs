@@ -24,6 +24,9 @@
 // or revokes one, so changing only the password in Kino's Configurar screen does NOT by itself force
 // a new login; the still-cached token keeps working (see README.md, "About the bundled token").
 // Media URLs (/stream/*, /live/*, /img/*) need no token: the player fetches them without one.
+//
+// Artwork: every title gets its own poster (2:3) and backdrop (16:9), each episode a still, drawn
+// on request by artwork.mjs -- a colour per title with its name on it, so the cards fill in.
 
 import { createServer } from "node:http";
 import { createReadStream, statSync } from "node:fs";
@@ -31,6 +34,7 @@ import { randomBytes } from "node:crypto";
 import { networkInterfaces } from "node:os";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
+import { artwork, SHAPES } from "./artwork.mjs";
 
 const argv = process.argv.slice(2);
 const args = Object.fromEntries(
@@ -46,6 +50,9 @@ const media = (name) => join(here, "media", name);
 // Progressive files served with Range support: what the player streams and what a download saves.
 const FILES = {
   v1: { path: media("video1.mp4"), mime: "video/mp4" },
+  // 45 s, long enough to open the audio menu by hand: a steady low tone as its own audio...
+  doblaje: { path: media("doblaje.mp4"), mime: "video/mp4" },
+  // ...and the "dub", 45 s of a fast high beep, so switching tracks is unmistakable.
   "audio-es": { path: media("audio-es.m4a"), mime: "audio/mp4" },
 };
 
@@ -63,7 +70,7 @@ const CATALOG = [
   { id: "v1", kind: "movie", title: "Video de prueba 1", year: 2024, stream: "v1" },
   { id: "bbb", kind: "movie", title: "Big Buck Bunny", year: 2008, tmdb: 10378, stream: "v1" },
   {
-    id: "doblaje", kind: "movie", title: "Película con doblaje", year: 2025, stream: "v1",
+    id: "doblaje", kind: "movie", title: "Película con doblaje", year: 2025, stream: "doblaje",
     audio: [{ lang: "es-419", label: "Español (doblaje de prueba)", file: "audio-es" }],
   },
   {
@@ -84,7 +91,10 @@ const CATALOG = [
 // Every episode, by id ("serie-t1-e2"): playable like a movie.
 const EPISODES = new Map(
   CATALOG.filter((x) => x.kind === "series").flatMap((s) =>
-    s.episodes.map((title, i) => [`${s.id}-e${i + 1}`, { id: `${s.id}-e${i + 1}`, kind: "episode", title, number: i + 1, stream: "v1" }]),
+    s.episodes.map((title, i) => [
+      `${s.id}-e${i + 1}`,
+      { id: `${s.id}-e${i + 1}`, kind: "episode", title, season: s.season, number: i + 1, stream: "v1" },
+    ]),
   ),
 );
 
@@ -129,11 +139,25 @@ function detail(x) {
   };
 }
 
-// A 1x1 placeholder poster, generated once: nobody needs a real image to see the plugin work.
-const PLACEHOLDER_PNG = Buffer.from(
-  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-  "base64",
-);
+// The small label on top of a title's artwork.
+function artLabel(x) {
+  if (x.kind === "series") return "Serie - Temporada " + x.season;
+  if (x.kind === "episode") return `T${x.season} - Episodio ${x.number}`;
+  if (x.kind === "live") return "En vivo";
+  return "Pelicula";
+}
+
+// Drawn once per shape and id, then kept: the same URL always answers the same bytes.
+const images = new Map();
+function image(shape, id) {
+  const key = shape + "/" + id;
+  if (!images.has(key)) {
+    const x = CATALOG.find((c) => c.id === id) || EPISODES.get(id);
+    if (!x) return null;
+    images.set(key, artwork({ id, title: x.title, label: artLabel(x), shape }));
+  }
+  return images.get(key);
+}
 
 function streamFile(req, res, { path, mime }) {
   let size;
@@ -228,9 +252,15 @@ const server = createServer((req, res) => {
     return json(res, 200, detail(item));
   }
 
-  if (read && url.pathname.startsWith("/img/")) {
-    res.writeHead(200, { "Content-Type": "image/png", "Content-Length": PLACEHOLDER_PNG.length });
-    return res.end(req.method === "HEAD" ? undefined : PLACEHOLDER_PNG);
+  // /img/poster/<id>.png, /img/backdrop/<id>.png (also an episode's still); /img/<id> is the
+  // poster, the URL plugin 1.1.0 and earlier asked for.
+  const imgMatch = /^\/img\/(?:([a-z]+)\/([^/]+)\.png|([^/]+))$/.exec(url.pathname);
+  const shape = imgMatch && (imgMatch[1] || "poster");
+  if (read && imgMatch && SHAPES[shape]) {
+    const png = image(shape, decodeURIComponent(imgMatch[2] || imgMatch[3]));
+    if (!png) return json(res, 404, { error: "no such title" });
+    res.writeHead(200, { "Content-Type": "image/png", "Content-Length": png.length, "Cache-Control": "max-age=86400" });
+    return res.end(req.method === "HEAD" ? undefined : png);
   }
 
   const fileMatch = /^\/stream\/([^/]+)$/.exec(url.pathname);

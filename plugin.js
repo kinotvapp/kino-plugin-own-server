@@ -49,7 +49,11 @@ async function api(path) {
   return r.json();
 }
 
-const poster = (id) => base() + "/img/" + encodeURIComponent(id);
+// Artwork lives on the same typed server, so `http` and a LAN address are fine here too. Posters
+// are 2:3 (the cards), backdrops 16:9 (the info page's background, and each episode's still).
+const art = (shape, id) => base() + "/img/" + shape + "/" + encodeURIComponent(id) + ".png";
+const poster = (id) => art("poster", id);
+const backdrop = (id) => art("backdrop", id);
 
 // `kind` comes from the server: "movie", "series" (one season of a show) or "live" (apiVersion 2).
 // `ids.tmdb` only when the server knows it: Kino then matches the title with TMDB and fills in its
@@ -61,6 +65,7 @@ const item = (x) => ({
   kind: x.kind,
   year: x.year,
   poster: poster(x.id),
+  backdrop: backdrop(x.id),
   ids: x.tmdb ? { tmdb: x.tmdb } : undefined,
 });
 
@@ -111,8 +116,8 @@ export async function episodes(ref) {
   const x = await api("/items/" + encodeURIComponent(ref));
   if (x.kind !== "series") throw kino.error("not_found");
   return {
-    series: { title: x.show.title, overview: x.show.overview, poster: poster(x.id) },
-    episodes: x.episodes.map((e) => ({ season: x.season, number: e.number, ref: e.id, title: e.title })),
+    series: { title: x.show.title, overview: x.show.overview, poster: poster(x.id), backdrop: backdrop(x.id) },
+    episodes: x.episodes.map((e) => ({ season: x.season, number: e.number, ref: e.id, title: e.title, still: backdrop(e.id) })),
     seasons: x.seasons.map((s) => ({
       id: s.id,
       ref: s.id,
