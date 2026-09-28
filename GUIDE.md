@@ -157,6 +157,7 @@ names the field.
 | `permissions` | Optional. A list of names from the closed list in `contract.json`. **The list is empty in this version**: any name is refused with "permiso desconocido: …". It exists so a later version can add permissions (each one shown on the consent screen) without a new `apiVersion`. |
 | `color` | Optional `#RRGGBB`: the accent of your plugin's tab and chips. A neutral color by default. |
 | `icon` | Optional relative path to a square `.png`, at most 128 KB. An icon that is missing or too big is skipped without failing the install. |
+| `discoverable` | Optional `true` or `false` (default `true`), at every `apiVersion`. `false` keeps the plugin out of Kino's community search (see [Get found](#get-found)); people can still install it by typing its address. Any other value is refused with "El campo \"discoverable\" debe ser true o false". |
 | `description`, `author`, `homepage` | Optional strings. Trimmed and cut to 300, 60 and 200 characters. Kino shows the name, author, version and description when it asks the person to install. |
 
 Other keys are ignored. `hosts` does three jobs: it is what the person approves, it is the only set
@@ -593,7 +594,7 @@ LiveCategory = { id: string, title: string, country?: string, adult?: boolean }
 Playlist     = { playlist: { url: string, format: "m3u", headers?: Record<string, string>,
                              epg?: { url: string, format: "xmltv" }, refreshHours?: number,
                              hideGroups?: string[], resolve?: boolean } }
-LiveChannel  = { id: string, title: string, categoryId: string, ref?: string, stream?: Stream,
+LiveChannel  = { id: string, title: string, categoryId?: string, ref?: string, stream?: Stream,
                  logo?: string, number?: number, adult?: boolean }
 GuideEntry   = { channelId: string, title: string, start: number, end: number, description?: string }
 ```
@@ -617,11 +618,11 @@ A plugin can give its channels in three ways, and mix them:
    answer.
 
    Each entry gets a channel code, the key of favourites and recents: its `tvg-id` when that is a
-   valid id **used by no other entry of the list**, else one made from its URL and name. So a
-   channel's code can change between refreshes: when the list later gains a second entry with the
-   same `tvg-id`, both switch to URL-and-name codes, and favourites and recents saved under the old
-   code stop matching (the same happens to a URL-and-name code when the URL changes). Give every
-   entry a stable, unique `tvg-id`; `node sdk/run.mjs live playlist <list>` lists the repeated ones.
+   valid id and the entry is the **first of the list to use it**, else one made from its URL and
+   name. A later entry repeating a `tvg-id` never moves the first one's code, but it gets a
+   URL-and-name code itself, which changes (and its favourites and recents stop matching) when its
+   URL does; a copy inserted *before* the first one takes the `tvg-id` code over. Give every entry a
+   stable, unique `tvg-id`; `node sdk/run.mjs live playlist <list>` lists the repeated ones.
 
 The rules:
 
@@ -631,7 +632,8 @@ The rules:
   entries and dropped. A repeated `id` in one answer is dropped. `title` is required.
 - `country` is an ISO 3166 two-letter code (`"CO"`), informational; anything else is ignored.
   `number` is 1 to 9999 (anything else counts as no number); `logo` follows the poster rules;
-  a `categoryId` that is not a valid id becomes empty.
+  `categoryId` is optional and informational (a channel is listed under the category
+  `liveChannels` was asked for); one that is not a valid id becomes empty.
 - Kino pages `liveChannels` until `next` is missing, repeats, or brings nothing new, at most 10
   pages per category.
 - Kino caches your categories and channels for 1 hour and your guide for 30 minutes.
@@ -1168,6 +1170,23 @@ Before you publish, check that:
 - your file uses none of the missing globals of [section 6](#6-limits-and-engine-quirks);
 - you installed it in Kino and it searches, lists episodes and plays.
 
+### Get found
+
+Kino lists community plugins by searching GitHub for public repositories with the topic
+`kino-plugin` (forks are left out). To be listed:
+
+1. On your repository's GitHub page, add the topic `kino-plugin` (About ▸ ⚙ ▸ Topics).
+2. Keep `kino-plugin.json` at the root of the repository: Kino reads it to show your plugin's name,
+   description, colour and icon, and skips a repository whose manifest is missing or invalid, needs a
+   newer `apiVersion` than the person's Kino, or says `"discoverable": false`. A plugin in a subfolder
+   can be installed by address but is not searched.
+3. Kino keeps the 30 most-starred matches, searches at most every 12 hours per device (and when the
+   person taps "Actualizar"), and shows them after the recommended plugins, labelled "De la comunidad".
+   Installing one goes through the same consent sheet as any other plugin.
+
+To stay out of the search while keeping the topic, set `"discoverable": false`;
+`node sdk/validate.mjs .` then prints "No aparecerá en la búsqueda de Kino".
+
 ## 9. What people see
 
 - **The consent sheet.** When someone types your address, Kino shows "Instalar <name>", your version
@@ -1190,7 +1209,8 @@ Before you publish, check that:
   that declares `download` can be saved for offline viewing ([section 3](#downloads-apiversion-2));
   Chromecast and DLNA are not available for plugin titles in this version. A `live` item's card
   says "EN VIVO" and plays on tap, with no info page; a channel never enters "Continuar viendo" or
-  the library ([Live channels](#live-channels-apiversion-2)).
+  the library ([Live channels](#live-channels-apiversion-2)). A plugin found through the `kino-plugin`
+  topic carries the label "De la comunidad" on its card.
 - **Status of each plugin** in Ajustes > Plugins: "Activo", "Desactivado", "Falta configurar", "No
   responde — actívalo para volver a intentar" (three timeouts in a row; the person can re-enable it),
   "Actualización

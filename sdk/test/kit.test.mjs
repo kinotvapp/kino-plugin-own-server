@@ -15,7 +15,7 @@ import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
 import { validate } from "../validate.mjs";
 import { scaffold } from "../init.mjs";
 import { call } from "../run.mjs";
-import { ADULT_GROUPS, normaliseName, parseM3u, parseXmltv, parseXmltvTime, summarisePlaylist } from "../live-playlist.mjs";
+import { ADULT_GROUPS, loadPlaylist, normaliseName, parseM3u, parseXmltv, parseXmltvTime, summarisePlaylist } from "../live-playlist.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 // Published repo: plugin.js/kino-plugin.json live at the repo root, two levels up from here.
@@ -839,6 +839,33 @@ test("liveStreamHosts any is read only on v3, and needs channels there", () => {
   assert.deepEqual(contract.manifest.liveStreamHosts, { value: "any", apiVersion: 3, requires: "channels" });
 });
 
+test("discoverable: an optional boolean at every apiVersion; false is a note, not a problem", async () => {
+  assert.equal(validateManifest(manifest()).manifest.discoverable, true);
+  for (const apiVersion of [1, 2, 3]) {
+    assert.equal(validateManifest(manifest({ apiVersion, discoverable: false })).manifest.discoverable, false);
+  }
+  for (const value of ["no", 0, null, []]) {
+    assert.deepEqual(validateManifest(manifest({ discoverable: value })), { ok: false, field: "discoverable", message: 'El campo "discoverable" debe ser true o false' });
+  }
+  assert.deepEqual(contract.discovery, { topic: "kino-plugin", maxResults: 30 });
+  assert.deepEqual(contract.manifest.discoverable, { default: true });
+  const dir = mkdtempSync(join(tmpdir(), "kino-discoverable-"));
+  try {
+    writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
+    writeFileSync(join(dir, "kino-plugin.json"), manifest());
+    assert.deepEqual((await validate(dir)).notes, []);
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ discoverable: false }));
+    const r = await validate(dir);
+    assert.equal(r.ok, true);
+    assert.deepEqual(r.notes, ["No aparecerá en la búsqueda de Kino"]);
+    const cli = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(cli.status, 0);
+    assert.match(cli.stderr, /No aparecerá en la búsqueda de Kino/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 // ---------- live channels: the kit's own M3U/XMLTV readers (apiVersion 3) ----------
 
 // The shared corpus the app's JVM tests read too. It lives only in Kino's repo
@@ -848,6 +875,10 @@ const fixturesDir = join(here, "..", "..", "..", "docs", "plugins", "fixtures", 
 const fixtures = existsSync(fixturesDir) ? fixturesDir : null;
 const needFixtures = (t) => { if (!fixtures) t.skip("no shared live fixtures around this kit"); return !!fixtures; };
 const M3U_FIXTURES = ["basic", "bom-crlf", "latin1", "broken", "headers", "unterminated-quote", "huge-line"];
+// Whole-playlist fixtures: their .expected.json holds the manifest, the typed servers, the
+// declaration and the grouped counts, checked here through loadPlaylist and in the app's
+// PluginLivePlaylistTest through PluginLiveProvider.
+const PLAYLIST_FIXTURES = ["any-hosts"];
 
 test("the kit's M3U reader gives the app's exact answer on every shared fixture", (t) => {
   if (!needFixtures(t)) return;
@@ -861,8 +892,25 @@ test("the kit's M3U reader gives the app's exact answer on every shared fixture"
 test("every .m3u in the shared corpus has its .expected.json and is checked here", (t) => {
   if (!needFixtures(t)) return;
   const m3u = readdirSync(fixtures).filter((f) => f.endsWith(".m3u")).map((f) => f.slice(0, -4)).sort();
-  assert.deepEqual(m3u, [...M3U_FIXTURES].sort());
+  assert.deepEqual(m3u, [...M3U_FIXTURES, ...PLAYLIST_FIXTURES].sort());
   for (const name of m3u) assert.ok(existsSync(join(fixtures, `${name}.expected.json`)), name);
+});
+
+test("loadPlaylist keeps, skips and hides exactly what the app does (README live recipe 1)", async (t) => {
+  if (!needFixtures(t)) return;
+  for (const name of PLAYLIST_FIXTURES) {
+    const want = JSON.parse(readFileSync(join(fixtures, `${name}.expected.json`), "utf8"));
+    const m = validateManifest(manifest({ apiVersion: 3, capabilities: ["home", "resolve", "channels"], ...want.manifest }));
+    assert.equal(m.ok, true, name);
+    const bytes = readFileSync(join(fixtures, `${name}.m3u`));
+    const fetchImpl = async (url) => (String(url) === want.playlist.url ? new Response(bytes, { status: 200 }) : new Response("no", { status: 404 }));
+    // Read as the app reads the liveCategories answer (strict hosts, hideGroups normalised) first.
+    const declared = checkOutput("liveCategories", [{ playlist: want.playlist }], m.manifest, want.servers).value.playlists;
+    assert.equal(declared.length, 1, name);
+    const s = await loadPlaylist(declared[0], { manifest: m.manifest, servers: want.servers, fetchImpl });
+    assert.deepEqual([s.channels, s.skipped, s.hidden], [want.kept, want.skipped, want.hidden], name);
+    assert.deepEqual(s.entries.map((e) => e.name), want.channels, name);
+  }
 });
 
 test("the kit's M3U reader keeps the cap and counts the rest", () => {
@@ -975,6 +1023,15 @@ test("summarisePlaylist groups as the app: adult and hideGroups hidden, blank gr
   assert.deepEqual(s.categories.map((c) => [c.title, c.count]), [["Sin categoría", 2]]);
   assert.deepEqual(s.duplicateTvgIds, ["d"]);
   assert.ok(ADULT_GROUPS.includes("xxx"));
+});
+
+test("summarisePlaylist keys a repeated tvg-id's first entry by the tvg-id, like the app's channel code", () => {
+  // The first "d" keeps its tvg-id code, so the id-less copy of its url and name is a channel of its own;
+  // the later "d" gets a url-and-name code, and the very same url and name again is the copy skipped.
+  const text = "#EXTM3U\n#EXTINF:-1 tvg-id=\"d\",Z\nhttps://c.example.com/z\n#EXTINF:-1 tvg-id=\"d\",W\nhttps://c.example.com/w\n#EXTINF:-1,Z\nhttps://c.example.com/z\n#EXTINF:-1,W\nhttps://c.example.com/w\n";
+  const s = summarisePlaylist(text);
+  assert.deepEqual([s.channels, s.skipped], [3, 1]);
+  assert.deepEqual(s.duplicateTvgIds, ["d"]);
 });
 
 test("validate shows the consent lines, the channels line and liveStreamHosts any in red", async () => {
