@@ -1,22 +1,21 @@
 {
   "id": "own-server",
   "name": "Tu servidor",
-  "version": "1.1.1",
-  "apiVersion": 2,
+  "version": "1.2.0",
+  "apiVersion": 3,
   "entry": "plugin.js",
   "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
   "author": "kinotvapp",
   "homepage": "https://github.com/kinotvapp/kino-plugin-own-server",
-  "hosts": [
-    "tu-servidor.invalid"
-  ],
+  "hosts": [],
   "capabilities": [
     "search",
     "home",
     "browse",
     "episodes",
     "resolve",
-    "download"
+    "download",
+    "channels"
   ],
   "settings": [
     { "key": "server", "label": "Servidor", "type": "url", "required": true, "hint": "http://192.168.1.10:8096" },

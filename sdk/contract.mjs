@@ -62,6 +62,11 @@ export function schemeAllowed(u, manifest) {
   return (manifest.insecureHosts || []).includes(h);
 }
 
+/** The functions the entry file must export for [caps], as the app's ManifestParser.requiredExports. */
+export function requiredExports(caps) {
+  return [...new Set(caps.flatMap((c) => contract.capabilities.exports[c] || (contract.capabilities.declarative.includes(c) ? [] : [c])))];
+}
+
 /** Same checks, same order, same Spanish messages as the app's own manifest validation. Returns { ok, field?, message?, manifest? }. */
 export function validateManifest(text, { knownPermissions = contract.permissions } = {}) {
   const m = contract.manifest;
@@ -81,14 +86,17 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.apiVersion < 1) return bad("apiVersion", 'El campo "apiVersion" debe ser 1 o mayor');
   if (!isSafeRelativePath(o.entry) || !o.entry.endsWith(".js")) return bad("entry", 'El campo "entry" debe ser una ruta relativa a un archivo .js');
   if (!Array.isArray(o.hosts)) return bad("hosts", 'Falta el campo "hosts"');
-  if (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
+  // Empty is judged once the settings are read (below), and only from noHostsApiVersion: an older
+  // manifest gets the refusal it always got, at the point it always got it.
+  const emptyHostsAllowedLater = o.hosts.length === 0 && o.apiVersion >= m.noHostsApiVersion;
+  if (!emptyHostsAllowedLater && (o.hosts.length < m.minHosts || o.hosts.length > m.maxHosts)) return bad("hosts", `El campo "hosts" debe tener de 1 a ${m.maxHosts} dominios`);
   const hostEntries = [];
   for (const raw of o.hosts) {
     if (typeof raw === "string") { hostEntries.push({ host: raw, insecure: false }); continue; }
     if (raw !== null && typeof raw === "object" && !Array.isArray(raw)) {
       // The object shape itself -- {host, insecureHttp} -- is apiVersion 2, whatever insecureHttp's
       // value: a v1 manifest gets the same clear refusal either way.
-      if (o.apiVersion < contract.maxApiVersion) return bad("hosts", `Un host con "insecureHttp" necesita apiVersion ${contract.maxApiVersion}`);
+      if (o.apiVersion < m.insecureHostApiVersion) return bad("hosts", `Un host con "insecureHttp" necesita apiVersion ${m.insecureHostApiVersion}`);
       hostEntries.push({ host: typeof raw.host === "string" ? raw.host : "", insecure: raw.insecureHttp === true });
       continue;
     }
@@ -106,14 +114,20 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   const caps = [...new Set(o.capabilities.map((c) => (typeof c === "string" ? c : "")))];
   const unknownCap = caps.find((c) => !contract.capabilities.names.includes(c));
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
-  if (o.apiVersion < contract.maxApiVersion) {
-    const tooNewCap = caps.find((c) => contract.capabilities.declarative.includes(c));
-    if (tooNewCap !== undefined) return bad("capabilities", "Esta capacidad necesita apiVersion 2");
-  }
+  const tooNewCap = caps.find((c) => (contract.capabilities.apiVersions[c] ?? 1) > o.apiVersion);
+  if (tooNewCap !== undefined) return bad("capabilities", `Esta capacidad necesita apiVersion ${contract.capabilities.apiVersions[tooNewCap]}`);
   const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
   if (missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
   if (!contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {
     return bad("capabilities", `El plugin debe declarar "${contract.capabilities.atLeastOneOf.join('" o "')}"`);
+  }
+  let liveStreamHostsAny = false;
+  // Below its apiVersion the field is unknown and ignored like any other (v1/v2 stay as they were).
+  if (o.liveStreamHosts !== undefined && o.apiVersion >= m.liveStreamHosts.apiVersion) {
+    const lsh = m.liveStreamHosts;
+    if (o.liveStreamHosts !== lsh.value) return bad("liveStreamHosts", `El campo "liveStreamHosts" solo admite "${lsh.value}"`);
+    if (!caps.includes(lsh.requires)) return bad("liveStreamHosts", `"liveStreamHosts" necesita la capacidad "${lsh.requires}"`);
+    liveStreamHostsAny = true;
   }
   if (o.color !== undefined && o.color !== "" && !re(m.colorPattern).test(o.color)) return bad("color", 'El campo "color" debe ser del tipo #RRGGBB');
   if (o.icon !== undefined && o.icon !== "" && (!isSafeRelativePath(o.icon) || !o.icon.endsWith(".png"))) return bad("icon", 'El campo "icon" debe ser una ruta relativa a un .png');
@@ -125,7 +139,10 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (o.settings !== undefined && !Array.isArray(o.settings)) return bad("settings", 'El campo "settings" debe ser una lista');
   const settingsError = validateSettings(o.settings || []);
   if (settingsError) return bad("settings", settingsError);
-  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts } };
+  if (hosts.length === 0 && !(o.settings || []).some((x) => x.type === "url")) {
+    return bad("hosts", 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"');
+  }
+  return { ok: true, manifest: { ...o, hosts: [...new Set(hosts)], capabilities: caps, permissions: o.permissions || [], settings: o.settings || [], insecureHosts, liveStreamHostsAny } };
 }
 
 function validateSettings(list) {
@@ -292,7 +309,7 @@ function rows(value, ctx, drop) {
   return out;
 }
 
-function episodes(value, drop) {
+function episodes(value, drop, servers) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("La lista de capítulos no es válida");
   if (!Array.isArray(value.episodes)) throw new Error("El plugin no devolvió capítulos");
   const seen = new Set();
@@ -306,7 +323,13 @@ function episodes(value, drop) {
     const key = season + "x" + e.number;
     if (seen.has(key)) return drop(`episodes: duplicate S${season}E${e.number} dropped`);
     seen.add(key);
-    eps.push({ season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars), airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "" });
+    eps.push({
+      season, number: e.number, ref: e.ref, title: text(e.title, o().maxTitleChars),
+      // The same image and length rules as an item's poster and runtimeMinutes (PluginOutput.episodes).
+      still: image(e.still, servers), overview: text(e.overview, o().maxTextChars),
+      airDate: re(o().airDatePattern).test(text(e.airDate, 10)) ? text(e.airDate, 10) : "",
+      runtimeMinutes: Number.isInteger(e.runtimeMinutes) && e.runtimeMinutes >= o().minRuntimeMinutes && e.runtimeMinutes <= o().maxRuntimeMinutes ? e.runtimeMinutes : 0,
+    });
   });
   return { series: value.series && typeof value.series === "object" ? value.series : null, episodes: eps, seasons: seasons(value, drop) };
 }
@@ -365,25 +388,198 @@ function drmOf(value, check, allowDrm) {
   return { type: d.type, licenseUrl: d.licenseUrl, licenseHeaders: headersOf(d.licenseHeaders) };
 }
 
-function stream(value, { manifest, servers, allowDrm }) {
+function stream(value, { manifest, servers, allowDrm, liveChannel = false }) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("El plugin no devolvió un video");
-  const check = (url, what) => {
+  const check = urlChecker(manifest, servers);
+  const drm = drmOf(value, check, allowDrm);
+  // `liveStreamHosts: "any"` relaxes a live channel's own stream URL only; its subtitles, audio and
+  // license stay on the strict rule below.
+  if (liveChannel && manifest.liveStreamHostsAny) {
+    if (!liveStreamUrlAllowed(manifest, servers)(value.url)) throw new Error("El video apunta a una dirección local");
+  } else check(value.url, "El video");
+  const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
+  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
+    try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
+  });
+  // One URL is one merged child in the app: a repeated URL is kept once, the first wins.
+  const audioUrls = new Set();
+  const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
+    try { check(a && a.url, "El audio"); } catch { return false; }
+    if (audioUrls.has(a.url)) return false;
+    audioUrls.add(a.url);
+    return true;
+  });
+  return { ...value, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm };
+}
+
+/** The stream URL rule (the app's PluginOutput.checkUrl): a typed server, or the scheme rule and a declared host. */
+function urlChecker(manifest, servers) {
+  return (url, what) => {
     let u;
     try { u = new URL(String(url)); } catch { throw new Error(`${what} tiene una dirección inválida`); }
     if (servers.some((s) => sameServer(s, u))) return;
     if (!schemeAllowed(u, manifest)) throw new Error(`${what} debe usar https`);
     if (!hostMatches(u.hostname, manifest.hosts)) throw new Error(`${what} apunta a ${u.hostname}, que el plugin no declaró`);
   };
-  const drm = drmOf(value, check, allowDrm);
-  check(value.url, "El video");
-  const expires = Number.isInteger(value.expiresInSeconds) && value.expiresInSeconds >= o().minExpiresInSeconds && value.expiresInSeconds <= o().maxExpiresInSeconds ? value.expiresInSeconds : 0;
-  const subtitles = (Array.isArray(value.subtitles) ? value.subtitles : []).slice(0, o().maxSubtitles).filter((s) => {
-    try { check(s && s.url, "El subtítulo"); return true; } catch { return false; }
+}
+
+const live = () => contract.live;
+
+/** HostRules.isPublicIpv4Literal: a canonical dotted IPv4 outside every private, local and reserved range. */
+export function isPublicIpv4Literal(host) {
+  const parts = String(host).split(".");
+  if (parts.length !== 4) return false;
+  const b = parts.map((p) => (/^\d+$/.test(p) && Number(p) <= 255 && String(Number(p)) === p ? Number(p) : -1));
+  if (b.includes(-1)) return false;
+  if (b[0] === 0 || b[0] === 10 || b[0] === 127 || b[0] >= 224) return false;
+  if (b[0] === 100 && b[1] >= 64 && b[1] <= 127) return false;
+  if (b[0] === 169 && b[1] === 254) return false;
+  if (b[0] === 172 && b[1] >= 16 && b[1] <= 31) return false;
+  if (b[0] === 192 && b[1] === 168) return false;
+  if (b[0] === 192 && b[1] === 0 && (b[2] === 0 || b[2] === 2)) return false;
+  if (b[0] === 198 && (b[1] === 18 || b[1] === 19)) return false;
+  return true;
+}
+
+/**
+ * The playlist and XMLTV download rule (strict, never `liveStreamHosts: "any"`): a server the person
+ * typed, or the scheme rule and a declared host. Every redirect hop is judged the same way.
+ */
+export function playlistUrlAllowed(manifest, servers = []) {
+  const check = urlChecker(manifest, servers);
+  return (url) => { try { check(url, ""); return true; } catch { return false; } };
+}
+
+/**
+ * A live channel's own stream URL (PluginOutput.checkUrl with anyPublicLiveHost): the strict rule,
+ * or, with `liveStreamHosts: "any"`, any public host over http(s), never a local one and never
+ * another port or scheme of a server the person typed.
+ */
+export function liveStreamUrlAllowed(manifest, servers = []) {
+  const strict = playlistUrlAllowed(manifest, servers);
+  const typedNames = servers.map((s) => { try { return new URL(s).hostname; } catch { return null; } });
+  return (url) => {
+    if (strict(url)) return true;
+    if (!manifest.liveStreamHostsAny) return false;
+    let u;
+    try { u = new URL(String(url)); } catch { return false; }
+    if (u.protocol !== "http:" && u.protocol !== "https:") return false;
+    if (typedNames.includes(u.hostname)) return false;
+    return isPublicIpv4Literal(u.hostname) || !isLocalAddress(u.hostname);
+  };
+}
+
+/** A `{ playlist: {...} }` declaration, read as PluginOutput.playlistOf: null (dropped) when it can't be used. */
+function playlistOf(p, { manifest, servers }, drop) {
+  const allows = (url) => { try { urlChecker(manifest, servers)(url, ""); return true; } catch { return false; } };
+  const url = typeof p.url === "string" ? p.url : "";
+  if (!live().playlistFormats.includes(p.format)) { drop("playlist: unknown format"); return null; }
+  // Strict on purpose: the list and its guide are downloaded by the app, never under liveStreamHosts "any".
+  if (!allows(url)) { drop(`playlist: ${url.slice(0, 100)} is not a declared host`); return null; }
+  let epgUrl = "";
+  if (p.epg !== null && typeof p.epg === "object" && !Array.isArray(p.epg) && live().epgFormats.includes(p.epg.format)) {
+    const e = typeof p.epg.url === "string" ? p.epg.url : "";
+    if (allows(e)) epgUrl = e; else drop("playlist: epg host not declared, guide dropped");
+  }
+  const h = typeof p.refreshHours === "number" ? Math.trunc(p.refreshHours) : NaN;
+  const refreshHours = h >= live().minRefreshHours && h <= live().maxRefreshHours ? h : live().defaultRefreshHours;
+  const hideGroups = [...new Set((Array.isArray(p.hideGroups) ? p.hideGroups : []).slice(0, live().maxHideGroups)
+    .map((g) => (typeof g === "string" ? g.trim().toLowerCase().slice(0, 100) : "")).filter(Boolean))];
+  return { url, headers: headersOf(p.headers), epgUrl, refreshHours, hideGroups, resolve: p.resolve === true };
+}
+
+/** liveCategories(), read as PluginOutput.liveCategories: `{ categories, playlists }`. */
+function liveCategories(value, ctx, drop) {
+  let list = value;
+  if (!Array.isArray(value)) {
+    if (value !== null && typeof value === "object" && "playlist" in value) list = [value];
+    else { drop("liveCategories: the answer is not a JSON array"); return { categories: [], playlists: [] }; }
+  }
+  const categories = [];
+  const playlists = [];
+  const seen = new Set();
+  list.forEach((c, i) => {
+    if (c === null || typeof c !== "object" || Array.isArray(c)) return;
+    if ("playlist" in c) {
+      if (c.playlist === null || typeof c.playlist !== "object" || Array.isArray(c.playlist)) return drop(`liveCategories: #${i} playlist is not an object`);
+      if (playlists.length >= live().maxPlaylists) return drop(`liveCategories: playlists beyond ${live().maxPlaylists} dropped`);
+      const p = playlistOf(c.playlist, ctx, drop);
+      if (p) playlists.push(p);
+      return;
+    }
+    if (categories.length >= live().maxCategories) return drop(`liveCategories: beyond ${live().maxCategories} dropped`);
+    // optString in the app: a numeric id is its text.
+    const id = typeof c.id === "number" ? String(c.id) : typeof c.id === "string" ? c.id : "";
+    if (!re(o().itemIdPattern).test(id)) return drop(`liveCategories: #${i} has an invalid id`);
+    const title = text(c.title, o().maxTitleChars);
+    if (!title) return drop(`liveCategories: ${id} has no title`);
+    if (c.adult === true) return drop(`liveCategories: ${id} adult, dropped`);
+    if (seen.has(id)) return drop(`liveCategories: duplicate ${id} dropped`);
+    seen.add(id);
+    const cc = typeof c.country === "string" ? c.country.trim().toUpperCase() : "";
+    categories.push({ id, title, country: /^[A-Z]{2}$/.test(cc) ? cc : "" });
   });
-  const audioTracks = (Array.isArray(value.audioTracks) ? value.audioTracks : []).slice(0, o().maxAudioTracks).filter((a) => {
-    try { check(a && a.url, "El audio"); return true; } catch { return false; }
+  return { categories, playlists };
+}
+
+/** liveChannels(), read as PluginOutput.liveChannels. Every channel carries `ref` ("" when absent) and `stream` (null when absent). */
+function liveChannels(value, ctx, drop) {
+  let list = value;
+  let next = null;
+  if (!Array.isArray(value)) {
+    if (value === null || typeof value !== "object" || !Array.isArray(value.items)) { drop("liveChannels: the answer is not a list or a page"); return { items: [], next: null }; }
+    list = value.items;
+    next = typeof value.next === "string" && value.next ? value.next : null;
+    if (next && next.length > o().maxCursorChars) { drop(`page: next longer than ${o().maxCursorChars} dropped`); next = null; }
+  }
+  const out = [];
+  const seen = new Set();
+  list.forEach((c, i) => {
+    if (out.length >= live().maxChannelsPerPage) { drop(`liveChannels: beyond ${live().maxChannelsPerPage} dropped`); return; }
+    if (c === null || typeof c !== "object") return;
+    // optString in the app: a numeric id is its text.
+    const id = typeof c.id === "number" ? String(c.id) : typeof c.id === "string" ? c.id : "";
+    if (!re(o().itemIdPattern).test(id)) return drop(`liveChannels: #${i} has an invalid id`);
+    if (id.startsWith(live().reservedIdPrefix)) return drop(`liveChannels: ${id} uses a reserved id`);
+    const title = text(c.title, o().maxTitleChars);
+    if (!title) return drop(`liveChannels: ${id} has no title`);
+    if (c.adult === true) return drop(`liveChannels: ${id} adult, dropped`);
+    const ref = typeof c.ref === "string" ? c.ref : "";
+    if (ref.length > o().maxRefChars) return drop(`liveChannels: ${id} has an invalid ref`);
+    let checked = null;
+    if (c.stream !== null && typeof c.stream === "object" && !Array.isArray(c.stream)) {
+      try { checked = stream(c.stream, { ...ctx, liveChannel: true }); } catch (e) { return drop(`liveChannels: ${id} stream refused: ${e.message}`); }
+    }
+    if (!ref && !checked) return drop(`liveChannels: ${id} has neither a ref nor a stream`);
+    if (seen.has(id)) return drop(`liveChannels: duplicate ${id} dropped`);
+    seen.add(id);
+    const number = Number.isInteger(c.number) && c.number >= 1 && c.number <= live().maxChannelNumber ? c.number : 0;
+    const categoryId = typeof c.categoryId === "string" && re(o().itemIdPattern).test(c.categoryId) ? c.categoryId : "";
+    out.push({ id, title, ref, logo: image(c.logo, ctx.servers), number, categoryId, stream: checked });
   });
-  return { ...value, headers: headersOf(value.headers), subtitles, audioTracks, expiresInSeconds: expires, drm };
+  return { items: out, next };
+}
+
+/**
+ * guide(), read as PluginOutput.guide -- except the requested-ids and time-window filters, which
+ * need the call's arguments: the kit checks shape and limits only.
+ */
+function guide(value, drop) {
+  if (!Array.isArray(value)) { drop("guide: the answer is not a JSON array"); return []; }
+  const per = new Map();
+  value.forEach((g, i) => {
+    if (g === null || typeof g !== "object") return;
+    const channelId = typeof g.channelId === "string" ? g.channelId : "";
+    const title = text(g.title, o().maxTitleChars);
+    if (!channelId || !title) return drop(`guide: #${i} has no channel or title`);
+    if (!Number.isFinite(g.start) || !Number.isFinite(g.end) || g.end <= g.start) return drop(`guide: #${i} has an invalid start/end`);
+    const list = per.get(channelId) || [];
+    if (list.length >= live().maxGuideEntriesPerChannel) return drop(`guide: ${channelId} beyond ${live().maxGuideEntriesPerChannel} dropped`);
+    if (list.some((e) => e.start === Math.trunc(g.start))) return;
+    list.push({ channelId, title, start: Math.trunc(g.start), end: Math.trunc(g.end), description: text(g.description, o().maxTextChars) });
+    per.set(channelId, list);
+  });
+  return [...per.values()].flatMap((l) => l.sort((a, b) => a.start - b.start));
 }
 
 /**
@@ -391,7 +587,11 @@ function stream(value, { manifest, servers, allowDrm }) {
  * lines the app writes). Throws, with the app's message, when the app would refuse it outright.
  * [servers]: the url settings' values (`--config`), which the app allows like declared hosts.
  */
-export function checkOutput(fn, value, manifest, servers = []) {
+/**
+ * `liveChannel`: the `resolve` answer is for a live channel's ref (the app knows; the kit is told),
+ * so `liveStreamHosts: "any"` applies to its stream URL.
+ */
+export function checkOutput(fn, value, manifest, servers = [], { liveChannel = false } = {}) {
   const drops = [];
   const drop = (m) => { drops.push(m); };
   const ctx = {
@@ -408,9 +608,12 @@ export function checkOutput(fn, value, manifest, servers = []) {
     case "search": return { value: page(parsed, o().maxSearchItems, ctx, drop), drops };
     case "browse": return { value: page(parsed, o().maxBrowseItems, { ...ctx, allowNext: true }, drop), drops };
     case "home": return { value: rows(parsed, ctx, drop), drops };
-    case "episodes": return { value: episodes(parsed, drop), drops };
+    case "episodes": return { value: episodes(parsed, drop, servers), drops };
     // Widevine is the `drm` capability (apiVersion 2 by the manifest rules): without it every DRM-shaped key refuses the stream.
-    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }), drops };
+    case "resolve": return { value: stream(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm"), liveChannel }), drops };
+    case "liveCategories": return { value: liveCategories(parsed, { manifest, servers }, drop), drops };
+    case "liveChannels": return { value: liveChannels(parsed, { manifest, servers, allowDrm: manifest.capabilities.includes("drm") }, drop), drops };
+    case "guide": return { value: guide(parsed, drop), drops };
     default: throw new Error(`unknown function ${fn}`);
   }
 }

@@ -7,11 +7,18 @@
 //   node sdk/run.mjs ./plugin.js browse '<ref>' ['<cursor>']
 //   node sdk/run.mjs ./plugin.js episodes '<series ref>'
 //   node sdk/run.mjs ./plugin.js resolve '<ref>'
+// Live channels (apiVersion 3, the "channels" capability):
+//   node sdk/run.mjs <plugin dir> live categories        (and downloads + groups each declared playlist)
+//   node sdk/run.mjs <plugin dir> live channels <categoryId> [cursor]
+//   node sdk/run.mjs <plugin dir> live guide <id,id>
+//   node sdk/run.mjs live playlist <url|file> [--epg <url|file>]   (any M3U list, no plugin needed)
 // Options (before the plugin path):
 //   --config key=value     a setting's value (repeatable); also read from sdk/config.json
 //   --record <file>        save every kino.fetch answer to <file> (JSON)
 //   --replay <file>        answer kino.fetch from <file> only: offline and repeatable
 //   --raw                  print the plugin's answer as it returned it, without the app's checks
+//   --epg <url|file>       live playlist only: the XMLTV guide to show what is on now
+//   --live                 resolve only: the ref is a live channel's (liveStreamHosts "any" applies)
 // The first argument is the plugin's entry file or the folder that holds kino-plugin.json. The
 // result goes to stdout as JSON; everything else (kino.log, console.*, dropped entries, errors)
 // goes to stderr.
@@ -19,10 +26,16 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, validateManifest } from "./contract.mjs";
+import { checkOutput, contract, validateManifest } from "./contract.mjs";
 import { createKino } from "./kino-shim.mjs";
+import { channelLines, download, guideFor, loadPlaylist, summarisePlaylist, summaryLines } from "./live-playlist.mjs";
 
 const FUNCTIONS = ["search", "home", "browse", "episodes", "resolve"];
+// `live <sub>` names one of the channels capability's exports.
+const LIVE = { categories: "liveCategories", channels: "liveChannels", guide: "guide" };
+const USAGE = "usage: node sdk/run.mjs [--config k=v] [--record f | --replay f] [--raw] <plugin.js | plugin folder> <search|home|browse|episodes|resolve> [argument] [cursor]\n"
+  + "       node sdk/run.mjs [--config k=v] <plugin folder> live <categories | channels <categoryId> [cursor] | guide <id,id>>\n"
+  + "       node sdk/run.mjs live playlist <url|file> [--epg <url|file>]";
 const here = dirname(fileURLToPath(import.meta.url));
 
 const stderr = console.error.bind(console);
@@ -33,7 +46,7 @@ function fail(message) {
 }
 
 export function parseArgs(argv) {
-  const opts = { config: {}, record: null, replay: null, raw: false };
+  const opts = { config: {}, record: null, replay: null, raw: false, epg: null, live: false };
   const rest = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -45,6 +58,8 @@ export function parseArgs(argv) {
     } else if (a === "--record") opts.record = argv[++i];
     else if (a === "--replay") opts.replay = argv[++i];
     else if (a === "--raw") opts.raw = true;
+    else if (a === "--epg") opts.epg = argv[++i];
+    else if (a === "--live") opts.live = true;
     else rest.push(a);
   }
   return { opts, rest };
@@ -57,10 +72,17 @@ async function main() {
   }
   let parsed;
   try { parsed = parseArgs(process.argv.slice(2)); } catch (e) { return fail(e.message); }
-  const { opts, rest: [targetArg, fn, ...rest] } = parsed;
-  if (!targetArg || !FUNCTIONS.includes(fn)) {
-    return fail("usage: node sdk/run.mjs [--config k=v] [--record f | --replay f] [--raw] <plugin.js | plugin folder> <search|home|browse|episodes|resolve> [argument] [cursor]");
+  const { opts, rest: args } = parsed;
+  if (args[0] === "live" && args[1] === "playlist") {
+    if (!args[2]) return fail(USAGE);
+    return livePlaylist(args[2], opts.epg);
   }
+  let [targetArg, fn, ...rest] = args;
+  if (fn === "live") {
+    fn = LIVE[rest[0]];
+    rest = rest.slice(1);
+  }
+  if (!targetArg || !(FUNCTIONS.includes(fn) || Object.values(LIVE).includes(fn))) return fail(USAGE);
   if (opts.record && opts.replay) return fail("--record and --replay can't be used together");
   const target = resolve(targetArg);
   let stat;
@@ -73,7 +95,8 @@ async function main() {
   const manifest = checked.manifest;
   const entryPath = resolve(dir, manifest.entry);
   if (!stat.isDirectory() && target !== entryPath) return fail(`${targetArg} is not the manifest's entry (${manifest.entry})`);
-  if (!manifest.capabilities.includes(fn)) return fail(`the manifest does not declare "${fn}" in capabilities`);
+  const capability = Object.values(LIVE).includes(fn) ? "channels" : fn;
+  if (!manifest.capabilities.includes(capability)) return fail(`the manifest does not declare "${capability}" in capabilities`);
 
   const configFile = join(here, "config.json");
   const config = { ...(existsSync(configFile) ? JSON.parse(readFileSync(configFile, "utf8")) : {}), ...opts.config };
@@ -107,10 +130,40 @@ async function main() {
       process.stdout.write(JSON.stringify(out === undefined ? null : out, null, 2) + "\n");
       return 0;
     }
-    const { value, drops } = checkOutput(fn, out, manifest, servers);
+    let checked;
+    try {
+      checked = checkOutput(fn, out, manifest, servers, { liveChannel: fn === "resolve" && opts.live });
+    } catch (e) {
+      // Refused only by host, and a live channel's ref would pass: say how to check it as one.
+      if (fn === "resolve" && !opts.live && manifest.liveStreamHostsAny) {
+        try { checkOutput(fn, out, manifest, servers, { liveChannel: true }); stderr("si este ref es de un canal en vivo, prueba con --live"); } catch { /* refused either way */ }
+      }
+      throw e;
+    }
+    const { value, drops } = checked;
     drops.forEach((d) => stderr(`[dropped by Kino] ${d}`));
     process.stdout.write(JSON.stringify(value, null, 2) + "\n");
-    return 0;
+    // Playing a listed channel: its ref goes to resolve() as a live channel's.
+    if (fn === "liveChannels") {
+      const r = await resolveFirstLiveRef(plugin, value, manifest, servers);
+      if (r) stderr(r.error ? `resolve(${r.ref}) ✗ ${r.error}` : `resolve(${r.ref}) → ${r.url}`);
+      if (r && r.error) return 1;
+    }
+    // The app downloads each declared playlist itself: do the same, and say what it would show.
+    let failed = false;
+    for (const p of fn === "liveCategories" ? value.playlists : []) {
+      try {
+        const s = await loadPlaylist(p, { manifest, servers });
+        stderr(`playlist ${p.url}:`);
+        summaryLines(s).forEach((l) => stderr(`  ${l}`));
+        s.categories.forEach((c) => stderr(`  categoría ${c.title} (${c.count})`));
+        if (s.channels === 0) { failed = true; stderr("  ✗ 0 canales: Kino would show nothing from this list"); }
+      } catch (e) {
+        failed = true;
+        stderr(`playlist ${p.url}: ✗ not downloaded: ${e.message}`);
+      }
+    }
+    return failed ? 1 : 0;
   } catch (e) {
     saveTape();
     stderr(e && e.code ? `[${e.code}] ${e.message}` : e && e.stack ? e.stack : String(e));
@@ -120,11 +173,53 @@ async function main() {
   }
 }
 
+/**
+ * The first listed channel that plays through a ref (no inline stream), resolved and checked the way
+ * the app plays a channel: `{ ref, url }`, `{ ref, error }`, or null when there is none to try.
+ */
+export async function resolveFirstLiveRef(plugin, page, manifest, servers) {
+  const c = (page.items || []).find((x) => x.ref && !x.stream);
+  if (!c || typeof plugin.resolve !== "function") return null;
+  try {
+    const { value } = checkOutput("resolve", await plugin.resolve(c.ref), manifest, servers, { liveChannel: true });
+    return { ref: c.ref, url: value.url };
+  } catch (e) {
+    return { ref: c.ref, error: e && e.code ? `[${e.code}] ${e.message}` : String(e && e.message ? e.message : e) };
+  }
+}
+
+/** Reads a local file, or downloads an http(s) URL under `maxBytes`. */
+async function readSource(src, maxBytes) {
+  if (/^https?:\/\//i.test(src)) return download(src, { maxBytes });
+  return readFileSync(src);
+}
+
+/** `live playlist`: any M3U list (and, with --epg, its guide) read exactly as Kino would. */
+async function livePlaylist(src, epg) {
+  try {
+    const s = summarisePlaylist(await readSource(src, contract.live.maxPlaylistBytes));
+    const guide = epg ? guideFor(s, await readSource(epg, contract.live.maxEpgBytes)) : null;
+    if (guide && guide.truncated) stderr("[guide] cut short (byte cap, a cut download or a broken tail): what was read is kept");
+    const refusal = guide && guide.refused ? ["La guía declara un DOCTYPE; Kino la rechaza por seguridad"] : [];
+    process.stdout.write([...summaryLines(s), ...refusal, ...s.categories.map((c) => `categoría ${c.title} (${c.count})`), "", ...channelLines(s, { guide })].join("\n") + "\n");
+    return s.channels ? 0 : 1;
+  } catch (e) {
+    return fail(`${src}: ${e.message}`);
+  }
+}
+
 /** The argument each function gets, exactly as the app builds it. */
 export async function call(plugin, fn, rest) {
   const arg = rest[0] === undefined ? "" : rest[0];
   if (fn === "home") return plugin.home(null);
   if (fn === "browse") return plugin.browse(arg, rest[1] === undefined ? null : rest[1]);
+  // apiVersion 3's channels: the same arguments the app's PluginLiveProvider sends.
+  if (fn === "liveCategories") return plugin.liveCategories(null);
+  if (fn === "liveChannels") return plugin.liveChannels({ categoryId: arg, cursor: rest[1] === undefined ? null : rest[1] });
+  if (fn === "guide") {
+    const from = Date.now() - 2 * 3600 * 1000;
+    return plugin.guide({ channelIds: arg ? arg.split(",") : [], from, to: from + contract.live.maxGuideWindowMs });
+  }
   if (fn !== "search") return plugin[fn](arg);
   const query = { q: "", type: process.env.KINO_TYPE || "any", season: 0, episode: 0, tmdbId: 0, year: 0, originalTitle: "", altTitles: [], cursor: null };
   if (arg.trimStart().startsWith("{")) {

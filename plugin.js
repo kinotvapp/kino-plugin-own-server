@@ -1,11 +1,11 @@
 // Tu servidor -- a Kino plugin for a media server at home (Jellyfin, Emby, a NAS...), and the demo
-// plugin of the whole SDK: every apiVersion 2 feature a server of your own can use is here, each
+// plugin of the whole SDK: every apiVersion 3 feature a server of your own can use is here, each
 // one exercised by a title of the bundled reference server (README.md, "What each title shows").
 //
 // The person types the server's address, user and password in Ajustes > Plugins > Configurar; the
-// address becomes an allowed host for this install only (see README.md, "Why the manifest still
-// declares a host"), so `http://` and a LAN address are both fine here -- that would be refused for
-// any host the plugin declares in its own manifest. A loopback address (127.0.0.1) is refused even
+// address becomes an allowed host for this install only (the manifest declares no host of its own:
+// `"hosts": []`), so `http://` and a LAN address are both fine here -- that would be refused for
+// any host a plugin declares in its manifest. A loopback address (127.0.0.1) is refused even
 // here: on a phone it would mean the phone itself, never a real server.
 //
 // Run a real server to try this against: `node server.mjs` (see README.md), then, from your
@@ -129,7 +129,7 @@ export async function episodes(ref) {
 }
 
 // Movies and episodes are progressive mp4 files, so with `download` declared Kino can save them;
-// the live channel is HLS and plays as live (never downloadable). A movie with a separate audio
+// the live channels are HLS and play as live (never downloadable). A movie with a separate audio
 // file gets it as an `audioTracks` entry, merged by the player and picked in its audio menu.
 export async function resolve(ref) {
   const x = await api("/items/" + encodeURIComponent(ref));
@@ -145,4 +145,50 @@ export async function resolve(ref) {
     stream.audioTracks = x.audio.map((a) => ({ lang: a.lang, label: a.label, url: base() + a.stream }));
   }
   return stream;
+}
+
+// apiVersion 3's `channels`: Tu servidor's channels in Kino's own En vivo tab (phone tab, TV guide,
+// channel drawer), next to -- not instead of -- the "En vivo" Home row above. They show all three
+// shapes a plugin can give, mixed in one answer:
+//   Noticias -- channels with a `ref`: Kino sends it to resolve() above when the person plays one
+//               (per-channel logic, fresh tokens...); the ref is the item id resolve() already knows;
+//   Deportes -- channels with an inline `stream`: they play with no call to the plugin at all
+//               (the fastest zapping), checked by the same rules as resolve()'s answer;
+//   a playlist -- an M3U list and its XMLTV guide that KINO downloads and parses itself (thousands
+//               of channels, no JS): its entries become categories named after their groups.
+export async function liveCategories() {
+  const categories = await api("/channels/categories");
+  return [
+    ...categories,
+    {
+      playlist: {
+        url: base() + "/lista.m3u",
+        format: "m3u",
+        // Sent with the list and guide downloads: this server wants its token there too.
+        headers: { "X-Token": await token() },
+        epg: { url: base() + "/guia.xml.gz", format: "xmltv" },
+        refreshHours: 1,
+        // Group titles never to show (the "Adultos" group is hidden by Kino whatever you say).
+        hideGroups: ["Compras"],
+      },
+    },
+  ];
+}
+
+export async function liveChannels({ categoryId }) {
+  const page = await api("/channels?category=" + encodeURIComponent(categoryId));
+  return {
+    items: page.items.map((c) => {
+      const channel = { id: c.id, title: c.title, number: c.number, categoryId: c.categoryId, logo: poster(c.id) };
+      if (categoryId === "deportes") channel.stream = { url: base() + "/live/" + c.id + ".m3u8", mime: "application/vnd.apple.mpegurl" };
+      else channel.ref = c.id;
+      return channel;
+    }),
+  };
+}
+
+// Optional: a guide for the channels above (the playlist's comes from its XMLTV file). Kino asks for
+// at most 50 ids and a window of at most 24 hours, and keeps what falls inside it.
+export async function guide({ channelIds, from, to }) {
+  return api("/channels/guide?ids=" + encodeURIComponent(channelIds.join(",")) + "&from=" + from + "&to=" + to);
 }
