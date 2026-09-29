@@ -284,6 +284,10 @@ To try the server while another copy is already running, start it on another por
 `sdk/kino-rank.mjs` is the same ranking code the app runs, and `sdk/live-playlist.mjs` the same M3U
 and XMLTV rules.
 
+## License
+
+The code in this repository is licensed under the [Apache License 2.0](LICENSE). Copyright 2026 kinotvapp.
+
 ## License note
 
 `plugin.js`, `server.mjs`, `artwork.mjs` and the bundled test media (`media/`, generated with ffmpeg's test
