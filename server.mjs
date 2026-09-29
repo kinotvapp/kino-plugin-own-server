@@ -48,6 +48,9 @@ const args = Object.fromEntries(
 const PORT = Number(args.port) || 8096;
 const USER = args.user || "ana";
 const PASSWORD = args.password || "s3cr3t";
+// With --live-agent <text>, the live channels only answer a player whose User-Agent contains <text> (a 403 for any
+// other): the way to see what the "User-Agent de los canales" setting is for.
+const LIVE_AGENT = args["live-agent"] || "";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const media = (name) => join(here, "media", name);
@@ -287,6 +290,10 @@ const server = createServer((req, res) => {
 
   const fileMatch = /^\/stream\/([^/]+)$/.exec(url.pathname);
   if (read && fileMatch && FILES[fileMatch[1]]) return streamFile(req, res, FILES[fileMatch[1]]);
+
+  if (LIVE_AGENT && read && /^\/live\//.test(url.pathname) && !String(req.headers["user-agent"] || "").includes(LIVE_AGENT)) {
+    return json(res, 403, { error: "this channel only answers a player whose User-Agent contains " + LIVE_AGENT });
+  }
 
   const liveMatch = /^\/live\/(canal-[1-9])\.m3u8$/.exec(url.pathname);
   if (read && liveMatch) return livePlaylist(res, liveMatch[1]);

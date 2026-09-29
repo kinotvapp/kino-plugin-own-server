@@ -1,7 +1,7 @@
 {
   "id": "own-server",
   "name": "Tu servidor",
-  "version": "1.2.0",
+  "version": "1.3.0",
   "apiVersion": 3,
   "entry": "plugin.js",
   "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
@@ -21,7 +21,8 @@
     { "key": "server", "label": "Servidor", "type": "url", "required": true, "hint": "http://192.168.1.10:8096" },
     { "key": "user", "label": "Usuario", "type": "text", "required": true },
     { "key": "password", "label": "Contraseña", "type": "password", "required": true },
-    { "key": "hd", "label": "Solo HD", "type": "toggle" }
+    { "key": "hd", "label": "Solo HD", "type": "toggle" },
+    { "key": "userAgent", "label": "User-Agent de los canales", "type": "text", "hint": "VLC/3.0.20 LibVLC/3.0.20" }
   ],
   "color": "#1F8A70",
   "icon": "icon.png"

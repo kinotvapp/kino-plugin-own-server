@@ -106,6 +106,37 @@ test("a movie with a separate audio file resolves with audioTracks", { skip }, a
   assert.deepEqual(s.audioTracks, [{ lang: "es-419", label: "Español (doblaje de prueba)", url: server + "/stream/audio-es" }]);
 });
 
+// The person's "User-Agent de los canales" setting reaches the player in the three shapes of a live channel.
+const withAgent = { ...config, userAgent: "VLC/3.0.20 LibVLC/3.0.20" };
+async function runWithAgent(fn, ...args) {
+  const now = Date.now;
+  Date.now = () => RECORDED_AT;
+  try {
+    const r = await validate(root, { run: fn, args, config: withAgent, replay: fixtures, fetchImpl });
+    assert.deepEqual(r.problems, []);
+    return r.output;
+  } finally {
+    Date.now = now;
+  }
+}
+
+test("with a User-Agent set, a ref channel, an inline stream and a playlist all carry it", { skip }, async () => {
+  const agent = { "User-Agent": "VLC/3.0.20 LibVLC/3.0.20" };
+  assert.deepEqual((await runWithAgent("resolve", "canal-1")).headers, agent);
+  const sports = await runWithAgent("liveChannels", "deportes");
+  assert.deepEqual(sports.items.map((c) => c.stream.headers), [agent, agent, agent]);
+  const playlist = (await runWithAgent("liveCategories")).playlists[0];
+  assert.deepEqual(playlist.streamHeaders, agent);
+  assert.ok(playlist.headers["X-Token"], "the list's own token stays in headers, for its download");
+  assert.equal(playlist.streamHeaders["X-Token"], undefined, "and never goes to the channels' hosts");
+});
+
+test("with no User-Agent set, nothing is added", { skip }, async () => {
+  assert.deepEqual((await run("resolve", "canal-1")).headers, {});
+  assert.deepEqual((await run("liveCategories")).playlists[0].streamHeaders, {});
+  assert.deepEqual((await run("liveChannels", "deportes")).items.map((c) => c.stream.headers), [{}, {}, {}]);
+});
+
 test("a live channel resolves to an HLS playlist", { skip }, async () => {
   const s = await run("resolve", "canal-1");
   assert.equal(s.url, server + "/live/canal-1.m3u8");

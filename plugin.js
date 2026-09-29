@@ -133,7 +133,7 @@ export async function episodes(ref) {
 // file gets it as an `audioTracks` entry, merged by the player and picked in its audio menu.
 export async function resolve(ref) {
   const x = await api("/items/" + encodeURIComponent(ref));
-  if (x.kind === "live") return { url: base() + x.stream, mime: "application/vnd.apple.mpegurl" };
+  if (x.kind === "live") return { url: base() + x.stream, mime: "application/vnd.apple.mpegurl", headers: agentHeaders() };
   const hd = kino.config.get("hd");
   const stream = {
     url: base() + x.stream + (hd ? "?quality=hd" : ""),
@@ -146,6 +146,15 @@ export async function resolve(ref) {
   }
   return stream;
 }
+
+// Some channels only answer a known player: the person can type the User-Agent Kino presents (Configurar ->
+// "User-Agent de los canales"). It goes to the player in all three shapes below -- `headers` on a Stream
+// (a `ref` channel's resolve() answer, an inline `stream`) and `streamHeaders` on a playlist -- and to
+// nothing else. Left empty, nothing is added and Kino sends its own.
+const agentHeaders = () => {
+  const agent = String(kino.config.get("userAgent") || "").trim();
+  return agent ? { "User-Agent": agent } : undefined;
+};
 
 // apiVersion 3's `channels`: Tu servidor's channels in Kino's own En vivo tab (phone tab, TV guide,
 // channel drawer), next to -- not instead of -- the "En vivo" Home row above. They show all three
@@ -166,6 +175,9 @@ export async function liveCategories() {
         format: "m3u",
         // Sent with the list and guide downloads: this server wants its token there too.
         headers: { "X-Token": await token() },
+        // Sent by the PLAYER with every channel of this list (apart from `headers` above: the token goes only to
+        // this server's list, never to the hosts the channels are on). An entry that names its own agent wins.
+        streamHeaders: agentHeaders(),
         epg: { url: base() + "/guia.xml.gz", format: "xmltv" },
         refreshHours: 1,
         // Group titles never to show (the "Adultos" group is hidden by Kino whatever you say).
@@ -180,7 +192,7 @@ export async function liveChannels({ categoryId }) {
   return {
     items: page.items.map((c) => {
       const channel = { id: c.id, title: c.title, number: c.number, categoryId: c.categoryId, logo: poster(c.id) };
-      if (categoryId === "deportes") channel.stream = { url: base() + "/live/" + c.id + ".m3u8", mime: "application/vnd.apple.mpegurl" };
+      if (categoryId === "deportes") channel.stream = { url: base() + "/live/" + c.id + ".m3u8", mime: "application/vnd.apple.mpegurl", headers: agentHeaders() };
       else channel.ref = c.id;
       return channel;
     }),

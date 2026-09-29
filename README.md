@@ -19,6 +19,7 @@ without owning a real Jellyfin box.
 | Channels with a `ref` (`channels`, apiVersion 3) | `liveChannels`, `resolve` | Noticias 1-3 in the En vivo tab: played through `resolve()` |
 | Channels with an inline `stream` | `liveChannels` | Deportes 1-3 in the En vivo tab: played with no call to the plugin |
 | A playlist Kino downloads (M3U + XMLTV guide, `hideGroups`) | `liveCategories` | Lista 1-3 under "Lista de prueba"; "Televentas" (hidden by the plugin) and an adults entry (hidden by Kino) never show |
+| A User-Agent the channels insist on (`headers` on a Stream, `streamHeaders` on a playlist) | `resolve`, `liveChannels`, `liveCategories` | the "User-Agent de los canales" setting, used by the three shapes above; try it with `--live-agent` |
 | A guide for the plugin's own channels | `guide` | Noticias and Deportes: what is on now and next, in the TV guide |
 | A cache that expires (`kino.storage.set(key, value, { ttlMs })`) | `home` | the Home rows: kept 15 minutes, then asked again |
 | Title search on a loose backend (`kino.rank.*`) | `search` | search "Serie de prueba": the server also answers "Video de prueba 1"; the plugin drops it |
@@ -40,8 +41,14 @@ recipes", whose first recipe -- a plain M3U list the person types -- is the one 
 ## Run the reference server
 
 ```
-node server.mjs [--port 8096] [--user ana] [--password s3cr3t]
+node server.mjs [--port 8096] [--user ana] [--password s3cr3t] [--live-agent VLC]
 ```
+
+With `--live-agent VLC` the live channels answer `403` to any player whose User-Agent does not contain `VLC`:
+type `VLC/3.0.20 LibVLC/3.0.20` in the plugin's Configurar screen ("User-Agent de los canales") and they play
+again. That setting is how a plugin sets the User-Agent some channels insist on: `headers` on a `Stream` (a `ref`
+channel's `resolve()` answer, an inline `stream`) and `streamHeaders` on a `playlist` (Kino versions before the one
+that added `streamHeaders` ignore that field, so a list plays without it).
 
 No dependencies -- just `node:http`, `node:fs` and `node:zlib`. On start it prints the addresses another device
 on your network can type (for example `http://192.168.1.10:8096`). If your computer's firewall asks,
