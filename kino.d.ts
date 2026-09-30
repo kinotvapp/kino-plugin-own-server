@@ -1,4 +1,4 @@
-// TypeScript declarations for Kino plugins (apiVersion 1, 2 and 3). Reference them from plugin.js
+// TypeScript declarations for Kino plugins (apiVersion 1, 2, 3 and 4). Reference them from plugin.js
 // with `/// <reference path="./kino.d.ts" />` for editor help; Kino itself runs plain JavaScript.
 // The numbers in the comments come from contract.json, which is authoritative. The app checks that
 // every `kino` member declared here exists in its runtime and nothing else does (KinoDtsTest).
@@ -55,11 +55,22 @@ interface KinoItem {
 }
 
 /** A Home row. `ref` needs the `browse` capability: the row gets "Ver más", which calls browse(ref, null). */
+type KinoGenre =
+  | "peliculas" | "series" | "anime" | "infantil" | "documentales"
+  | "deportes" | "noticias" | "musica" | "entretenimiento" | "otros";
+
 interface KinoRow {
   id: string;
   title: string;
   items: KinoItem[];
   ref?: string;
+  /**
+   * What the row (or category, or list) is about, from Kino's closed vocabulary: "peliculas", "series", "anime",
+   * "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento" or "otros". Kino groups Categorías
+   * by it and filters En vivo by it across plugins. Optional: without it Kino guesses from the title; a value outside
+   * the list is ignored. Kino versions before this field ignore it.
+   */
+  genre?: KinoGenre;
 }
 
 /** `next` (at most 2048 characters, opaque) needs the `browse` capability; the app passes it back as the cursor. */
@@ -164,6 +175,13 @@ interface KinoLiveCategory {
   title: string;
   /** ISO 3166 alpha-2, e.g. "CO". Informational. */
   country?: string;
+  /**
+   * What the row (or category, or list) is about, from Kino's closed vocabulary: "peliculas", "series", "anime",
+   * "infantil", "documentales", "deportes", "noticias", "musica", "entretenimiento" or "otros". Kino groups Categorías
+   * by it and filters En vivo by it across plugins. Optional: without it Kino guesses from the title; a value outside
+   * the list is ignored. Kino versions before this field ignore it.
+   */
+  genre?: KinoGenre;
 }
 
 /**
@@ -185,6 +203,8 @@ interface KinoPlaylist {
      * M3U entry names itself (`#EXTVLCOPT:http-user-agent=...`) wins. Kino versions before this field ignore it.
      */
     streamHeaders?: Record<string, string>;
+    /** The [genre](KinoLiveCategory) of every group this list produces; without it Kino guesses from each group's title. */
+    genre?: KinoGenre;
     epg?: { url: string; format: "xmltv" };
     refreshHours?: number;
     hideGroups?: string[];
@@ -321,6 +341,9 @@ declare namespace kino {
   /** 0..5000 ms, counts inside the call's own timeout. */
   function sleep(ms: number): Promise<void>;
 
+  /** apiVersion 4: a marker for a secret the manifest's `secrets` declares (throws for any other name). Kino swaps it for the value in `kino.fetch`, toward the manifest's own hosts only; your code never sees the value. */
+  function secret(name: string): string;
+
   /** Writes to Kino's log (and console.* does the same); lines are cut at 2000 characters. */
   function log(...args: unknown[]): void;
 
@@ -347,9 +370,9 @@ declare namespace kino {
   }
 
   namespace config {
-    /** A setting's value (string, or boolean for a toggle); undefined when unset with no default (a `url` setting never has one). Read-only. */
-    function get(key: string): string | boolean | undefined;
-    function all(): Record<string, string | boolean>;
+    /** A setting's value (string; boolean for a toggle; an array of `{ [field.key]: string }` for a `list`, apiVersion 4); undefined when unset with no default (a `url` setting never has one). Read-only. */
+    function get(key: string): string | boolean | Array<Record<string, string>> | undefined;
+    function all(): Record<string, string | boolean | Array<Record<string, string>>>;
   }
 
   namespace cookies {

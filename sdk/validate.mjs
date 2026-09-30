@@ -36,8 +36,10 @@ export function consentLines(m) {
   if (m.capabilities.includes("download")) line("Puede descargar videos para verlos sin conexión");
   if (m.capabilities.includes("drm")) line("Reproduce video protegido (DRM)");
   if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
+  if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
   (m.insecureHosts || []).forEach((h) => line(`Conexión sin cifrar con ${h}`, true));
   if (m.liveStreamHostsAny) line("Puede reproducir canales desde cualquier servidor que indique su lista", true);
+  if (m.streamHostsAny) line("Puede reproducir video desde cualquier servidor que indique", true);
   return out;
 }
 
@@ -50,7 +52,11 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   if (!checked.ok) return refused([`kino-plugin.json: ${checked.field}: ${checked.message}`]);
   const m = checked.manifest;
   const consent = consentLines(m);
-  const notes = m.discoverable ? [] : ["No aparecerá en la búsqueda de Kino"];
+  const notes = [];
+  if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
+  if (m.secrets && Object.keys(m.secrets).length) {
+    notes.push("No se puede comprobar aquí para qué repositorio se sellaron los secretos: Kino lo comprueba al instalar. Además, solo se abren si la persona instala el plugin desde su rama principal, sin @rama.");
+  }
   const entry = join(dir, m.entry);
   if (!existsSync(entry)) return { ...refused([`entry ${m.entry} not found`]), consent, notes };
   if (statSync(entry).size > contract.manifest.entryMaxBytes) problems.push(`${m.entry} is bigger than ${kb(contract.manifest.entryMaxBytes)}: Kino refuses it`);
@@ -61,7 +67,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   try {
     // Inside the try too: an invalid --replay path (or any other setup failure) must become a
     // problem, not an uncaught rejection.
-    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay), fetchImpl });
+    // The same local stand-in run.mjs reads: a plugin with `secrets` gets its plain values from it.
+    const { kino, servers } = createKino(m, { config, replay: replay && resolve(replay), fetchImpl, secretsFile: join(dir, ".kino-secrets.json") });
     globalThis.kino = kino;
     const copy = join(scratch, "plugin.mjs");
     writeFileSync(copy, readFileSync(entry));

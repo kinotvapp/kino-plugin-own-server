@@ -16,7 +16,7 @@ export const TABLES = {
   limits: () => table(["What", "Limit"], [
     ["Manifest / entry file / icon", `${kb(c.manifest.maxBytes)} / ${kb(c.manifest.entryMaxBytes)} / ${kb(c.manifest.iconMaxBytes)}`],
     ["Memory / stack, per plugin", `${kb(c.runtime.memoryBytes)} / ${kb(c.runtime.stackBytes)}`],
-    ["Time per call", `\`search\` ${c.timeoutsMs.search / 1000} s; \`home\`, \`browse\`, \`episodes\`, \`resolve\` ${c.timeoutsMs.home / 1000} s each; \`liveCategories\`, \`liveChannels\`, \`guide\` ${c.timeoutsMs.liveChannels / 1000} s each; counting all your fetches and sleeps together`],
+    ["Time per call", `\`search\` ${c.timeoutsMs.search / 1000} s; \`home\`, \`browse\`, \`episodes\`, \`resolve\` ${c.timeoutsMs.home / 1000} s each (\`resolve\` of a plugin converted from a Nuvio scraper: ${c.timeoutsMs.nuvioResolve / 1000} s); \`liveCategories\`, \`liveChannels\`, \`guide\` ${c.timeoutsMs.liveChannels / 1000} s each; counting all your fetches and sleeps together, but not the time the person spends answering a host question for that call`],
     ["Loading the module (its top level)", `${c.timeoutsMs.load / 1000} s`],
     ["Idle sandbox", `closed after ${c.runtime.idleCloseMs / 60000} minutes without calls`],
     ["Consecutive timeouts", `${c.runtime.timeoutsBeforeUnresponsive} in a row and Kino disables the plugin ("No responde")`],
@@ -32,12 +32,13 @@ export const TABLES = {
     ["Settings", `at most ${c.settings.max}; \`text\` ${c.settings.types.text.maxChars}, \`url\` ${n(c.settings.types.url.maxChars)}, \`password\` ${c.settings.types.password.maxChars} characters`],
     ["Error messages", `your \`kino.error\` message is shown as a detail, cut at ${c.errors.maxMessageChars} characters`],
     ["`hosts`", `${c.manifest.minHosts} to ${c.manifest.maxHosts} entries; from apiVersion ${c.manifest.noHostsApiVersion}, none (\`[]\`) when a \`url\` setting exists`],
+    [`\`secrets\` (apiVersion ${c.manifest.secrets.apiVersion})`, `at most ${c.manifest.secrets.maxSecrets}; names match \`${c.manifest.secrets.namePattern}\`; a value is 1..${n(c.manifest.secrets.maxValueBytes)} bytes`],
   ]),
   settings: () => table(["type", "value", "can be `required`", "can have a `default`", "longest value"], Object.entries(c.settings.types).map(([t, v]) => [
     `\`${t}\``,
-    t === "toggle" ? "`true` / `false`" : t === "select" ? "one of the `options` values" : "text",
+    t === "toggle" ? "`true` / `false`" : t === "select" ? "one of the `options` values" : t === "list" ? "a list of entries, each an object of the list's `fields`" : "text",
     v.canBeRequired ? "yes" : "no (always has a value)",
-    v.canHaveDefault ? "yes" : "no (use `hint` for an example)",
+    v.canHaveDefault ? "yes" : t === "list" ? "no" : "no (use `hint` for an example)",
     v.maxChars ? `${n(v.maxChars)} characters` : "—",
   ])),
   crypto: () => table(["Function", "Algorithms"], [
