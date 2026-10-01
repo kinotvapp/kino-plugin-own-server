@@ -45,7 +45,8 @@ declares and the person approved on screen, plus the servers the person typed in
 settings (see [section 3](#3-the-manifest)).
 
 Kino loads exactly one JavaScript file, so there is nothing for an `import` to resolve to. If you
-use a build step or a library, bundle everything into that single file.
+use a build step or a library, bundle everything into that single file -- see
+["Splitting your code across files"](#splitting-your-code-across-files) for a worked example.
 
 **How people install it.** In Kino, Ajustes > Plugins, they type the address of your repository:
 
@@ -286,14 +287,18 @@ What downloads, and what does not:
 - An HLS VOD stream (`.m3u8`, an `mpegurl` `mime`, or a response that turns out to be a playlist)
   downloads too, saved as one file: MPEG-TS segments become a `.ts`, fMP4 ones (`EXT-X-MAP`) an
   `.mp4`. From a master playlist Kino takes the highest variant up to 1080p whose audio is inside the
-  video; AES-128 keys, byte ranges and discontinuities are handled, and your `headers` go on the
-  playlists, the key and every segment. A retry resumes at the first missing segment.
+  video; AES-128 keys and byte ranges are handled, and your `headers` go on the playlists, the key
+  and every segment. At an `EXT-X-DISCONTINUITY` the segments are kept as they are (the timestamps
+  restart there and the player follows; seeking right at the splice may land a little off), unless
+  the video or audio format changes at it (e.g. H.264 → HEVC, a track added or gone): that is
+  refused like below. A retry resumes at the first missing segment when it gets the same content
+  (same variant, same first bytes), even from another CDN; different content starts over.
 - What cannot be saved ends as "Este video no se puede descargar", a final state with no
   "Reintentar" (it would refuse the same way) that the person can only remove: a DASH or Smooth
   manifest (`.mpd`, `application/dash+xml`, …), a live HLS playlist (no `EXT-X-ENDLIST`), SAMPLE-AES
-  or any DRM key, a master whose every video variant needs a separate audio rendition (Kino does not
-  save a silent video), a DRM-protected stream and a live channel. Subtitle renditions inside the
-  playlist are not saved (your `subtitles` are). There is no separate "resolve for download" call.
+  or any DRM key, a key that is not 16 bytes or does not decrypt, an empty segment, a master whose
+  every video variant needs a separate audio rendition (Kino does not save a silent video), a
+  DRM-protected stream and a live channel. Subtitle renditions inside the playlist are not saved (your `subtitles` are). There is no separate "resolve for download" call.
 - The queue downloads one title at a time, so a `ref` may wait a while before `resolve` is called:
   keep something stable in it and look the fresh link up inside `resolve` (as recommended above). A
   retry resumes the partial file even when your URL changed. A `resolve` the queue makes that times
@@ -924,16 +929,19 @@ seconds of your call's time. Ask for the form the content is.
   URL on a declared host fails too, unless you declared that host `{ "host": "…", "insecureHttp": true }`
   (apiVersion 2, [section 3](#declaring-an-insecure-host-apiversion-2)). An IP address or a local name (`localhost`, `.local`, …) is always
   refused unless the person typed it. Kino also refuses a declared name that resolves to an address
-  inside the person's own network (loopback, private, link-local, carrier-grade NAT, multicast).
+  inside the person's own network (loopback, private, link-local, carrier-grade NAT, multicast, and
+  the IPv6 prefixes that embed one), and never sends your traffic through a proxy set on the device.
 - **Redirects** (301, 302, 303, 307, 308) are followed by Kino, up to 10 hops; each hop is checked
-  and counted as a request. A 303, or a 301/302 after a POST, turns into a GET without a body. With
+  and counted as a request -- a hop Kino refuses (or asks the person about) counts too. A 303, or a 301/302 after a POST, turns into a GET without a body. With
   `redirect: "manual"` you get the 3xx answer instead (a login form usually answers 302 on success).
 - **A host you forgot may be asked about, during `resolve` and `episodes` only.** When one of those
   calls fetches an `https` host you did not declare (a redirect hop included), Kino asks the person
   ("Quiere conectarse por primera vez a `<host>`. ¿Permitir?"). Your call's time limit stops while
   they decide, and the fetch goes on after "Permitir"; "Rechazar" or Back fails it as
   `host_not_allowed` and is remembered. The question comes down unanswered, with nothing remembered,
-  if your call ends first (it failed, timed out, or the person left). `search`, `home`, `browse`, the
+  if your call ends first (it failed, timed out, or the person left). One call asks about at most 3
+  hosts, and nothing more once the person rejects one in it: after that, every other undeclared host
+  of that call just fails as `host_not_allowed`. `search`, `home`, `browse`, the
   live lists, a download and a call that is already over never ask: the fetch just fails as
   `host_not_allowed`. Don't rely on it: declare your hosts.
 - **A non-2xx answer does not throw**: check `r.ok`. Everything else that goes wrong throws an error
@@ -951,7 +959,8 @@ seconds of your call's time. Ask for the form the content is.
 
 - **Limits:** 15 s per request by default (30 s at most), a body of at most 5 MB (decoded with the
   charset of its `Content-Type`, UTF-8 by default), and at most 60 requests in one call to your
-  plugin, redirect hops included.
+  plugin, redirect hops and refused hops included (a plugin Kino converted from a Nuvio scraper
+  gets 250). At most 6 of your fetches run at the same time; the rest wait their turn.
 - **Headers you set** are sent as given, except `Host`, `Content-Length`, `Transfer-Encoding`,
   `Connection`, `Cookie2` and `Accept-Encoding` (Kino asks for gzip itself and always hands you the
   body decompressed; a copied browser `Accept-Encoding` would get you compressed bytes instead). Unless you set `User-Agent`, Kino sends `Kino/<version> (plugin <id>)`.
@@ -1160,7 +1169,7 @@ does anything with season numbers or ordering: how a backend spells "season 2" i
 | Loading the module (its top level) | 10 s |
 | Idle sandbox | closed after 5 minutes without calls |
 | Consecutive timeouts | 3 in a row and Kino disables the plugin ("No responde") |
-| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call; at most 10 redirects per request |
+| `kino.fetch` | https only (or the person's own server as typed, or `http` on a host declared `insecureHttp`); 15 s default, 30 s maximum; response body at most 5 MB; the request (URL, headers and body) at most 1,048,576 characters; at most 60 requests per call, every hop counted, refused ones included (250 for a plugin converted from a Nuvio scraper); at most 6 fetches in flight at once; at most 3 host questions per call; at most 10 redirects per request |
 | Cookies | 50 per domain, 64 KB in total per plugin |
 | `kino.storage` | 256 KB per plugin; an entry's optional `ttlMs` is 1..2,592,000,000 ms (30 days) |
 | `kino.sleep` | 0 to 5,000 ms per call |
@@ -1227,6 +1236,54 @@ literals, spread, `replaceAll`, `Array.prototype.at` and `flat`, `Object.fromEnt
   airtight (a huge computed key still names a function); a plugin that crashes the app anyway is
   switched off (see "App closed during a call" above). Setting `name` on ordinary objects, and
   `this.name = "MyError"` in an `Error` subclass, work as usual.
+
+### Splitting your code across files
+
+Kino loads exactly one file (the manifest's `entry`), and the engine has no `require` and no
+module resolver, so an `import` from `plugin.js` to a second file has nothing to resolve against on
+the device. That does not mean you must write the whole plugin in one file — just that the file you
+publish has to be the finished, single-file result.
+
+Write it split, normally, then bundle it before you publish:
+
+```
+src/
+  animeav1.js       a helper module
+  plugin.js         the entry point; imports from animeav1.js
+kino-plugin.json
+package.json
+```
+
+```js
+// src/animeav1.js
+export async function searchAnimeAV1(query) {
+  const res = await kino.fetch(`https://animeav1.com/api/search?q=${encodeURIComponent(query.q)}`);
+  if (!res.ok) throw new Error("animeav1 respondió " + res.status);
+  return res.json().results.map((r) => ({ id: r.slug, ref: r.slug, title: r.title, kind: "series", poster: r.image }));
+}
+```
+
+```js
+// src/plugin.js -- this import is fine: it runs through the bundler, never on the device
+import { searchAnimeAV1 } from "./animeav1.js";
+
+export async function search(query) {
+  return searchAnimeAV1(query);
+}
+```
+
+Bundle with [esbuild](https://esbuild.github.io/) (`npm i -D esbuild`), targeting ES module output
+(Kino runs the published file as one):
+
+```bash
+npx esbuild src/plugin.js --bundle --format=esm --outfile=plugin.js
+```
+
+`plugin.js` at the repo root is what comes out of that command, with `src/animeav1.js` inlined into
+it and its `export async function search` intact -- that is the file `entry` names and the one Kino
+fetches. Add it as an npm script (`"build": "esbuild src/plugin.js --bundle --format=esm --outfile=plugin.js"`)
+and run it before every `sdk/` test or publish. Rollup and webpack work the same way; esbuild needs
+the least configuration for a plugin this size.
 
 ### The trap: a rejection nobody is listening to yet
 
