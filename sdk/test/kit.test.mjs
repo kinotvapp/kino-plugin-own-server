@@ -29,7 +29,7 @@ const manifest = (extra = {}) => JSON.stringify({
 });
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 4);
+  assert.equal(contract.apiVersion, 5);
   assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels"]);
   assert.deepEqual(contract.capabilities.declarative, ["download", "drm"]);
   assert.deepEqual(contract.permissions, []);
@@ -82,7 +82,7 @@ test("apiVersion 2: empty hosts validate only with a url setting, as the app rul
   assert.deepEqual(ok.manifest.hosts, []);
   assert.equal(contract.manifest.noHostsApiVersion, 2);
   assert.deepEqual(validateManifest(manifest({ hosts: [], settings: [server] })),
-    { ok: false, field: "hosts", message: 'El campo "hosts" debe tener de 1 a 20 dominios' });
+    { ok: false, field: "hosts", message: 'El campo "hosts" debe tener al menos 1 dominio' });
   const noUrl = { ok: false, field: "hosts", message: 'El campo "hosts" solo puede estar vacío si el plugin tiene un ajuste de tipo "url"' };
   assert.deepEqual(validateManifest(manifest({ apiVersion: 2, hosts: [] })), noUrl);
   assert.deepEqual(validateManifest(manifest({ apiVersion: 2, hosts: [], settings: [{ key: "user", label: "Usuario", type: "text" }] })), noUrl);
