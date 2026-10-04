@@ -90,7 +90,7 @@
    ],
    [
     "content-length",
-    "473"
+    "547"
    ],
    [
     "content-type",
@@ -98,14 +98,14 @@
    ],
    [
     "date",
-    "Mon, 28 Sep 2026 06:53:06 GMT"
+    "Sun, 04 Oct 2026 12:25:59 GMT"
    ],
    [
     "keep-alive",
     "timeout=5"
    ]
   ],
-  "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fSx7ImlkIjoiYmJiIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJCaWcgQnVjayBCdW5ueSIsInllYXIiOjIwMDgsInRtZGIiOjEwMzc4fSx7ImlkIjoiZG9ibGFqZSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiUGVsw61jdWxhIGNvbiBkb2JsYWplIiwieWVhciI6MjAyNX0seyJpZCI6ImVyci00MDQiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IkVycm9yOiBubyBlbmNvbnRyYWRvIn0seyJpZCI6ImVyci00MjkiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IkVycm9yOiBsaW1pdGFkbyJ9LHsiaWQiOiJlcnItNDUxIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJFcnJvcjogcmVnacOzbiJ9LHsiaWQiOiJlcnItNTAzIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJFcnJvcjogbm8gZGlzcG9uaWJsZSJ9XX0="
+  "body": "eyJpdGVtcyI6W3siaWQiOiJ2MSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiVmlkZW8gZGUgcHJ1ZWJhIDEiLCJ5ZWFyIjoyMDI0fSx7ImlkIjoiYmJiIiwia2luZCI6Im1vdmllIiwidGl0bGUiOiJCaWcgQnVjayBCdW5ueSIsInllYXIiOjIwMDgsInRtZGIiOjEwMzc4fSx7ImlkIjoiZG9ibGFqZSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiUGVsw61jdWxhIGNvbiBkb2JsYWplIiwieWVhciI6MjAyNX0seyJpZCI6ImNvcGlhcyIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiUGVsw61jdWxhIGNvbiBjb3BpYXMiLCJ5ZWFyIjoyMDI1fSx7ImlkIjoiZXJyLTQwNCIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiRXJyb3I6IG5vIGVuY29udHJhZG8ifSx7ImlkIjoiZXJyLTQyOSIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiRXJyb3I6IGxpbWl0YWRvIn0seyJpZCI6ImVyci00NTEiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IkVycm9yOiByZWdpw7NuIn0seyJpZCI6ImVyci01MDMiLCJraW5kIjoibW92aWUiLCJ0aXRsZSI6IkVycm9yOiBubyBkaXNwb25pYmxlIn1dfQ=="
  },
  {
   "key": "[\"GET\",\"http://192.168.1.10:8096/items?limit=10&kind=series\",null]",
@@ -125,7 +125,7 @@
    ],
    [
     "date",
-    "Mon, 28 Sep 2026 06:53:06 GMT"
+    "Sun, 04 Oct 2026 12:25:59 GMT"
    ],
    [
     "keep-alive",
@@ -152,7 +152,7 @@
    ],
    [
     "date",
-    "Mon, 28 Sep 2026 06:53:06 GMT"
+    "Sun, 04 Oct 2026 12:25:59 GMT"
    ],
    [
     "keep-alive",
@@ -364,5 +364,59 @@
    ]
   ],
   "body": "I0VYVE0zVQojRVhUSU5GOi0xIHR2Zy1pZD0ibGlzdGEtNyIgdHZnLWNobm89IjciIHR2Zy1sb2dvPSJodHRwOi8vMTkyLjE2OC4xLjEwOjgwOTYvaW1nL3Bvc3Rlci9jYW5hbC03LnBuZyIgZ3JvdXAtdGl0bGU9Ikxpc3RhIGRlIHBydWViYSIsTGlzdGEgMQpodHRwOi8vMTkyLjE2OC4xLjEwOjgwOTYvbGl2ZS9jYW5hbC03Lm0zdTgKI0VYVElORjotMSB0dmctaWQ9Imxpc3RhLTgiIHR2Zy1jaG5vPSI4IiB0dmctbG9nbz0iaHR0cDovLzE5Mi4xNjguMS4xMDo4MDk2L2ltZy9wb3N0ZXIvY2FuYWwtOC5wbmciIGdyb3VwLXRpdGxlPSJMaXN0YSBkZSBwcnVlYmEiLExpc3RhIDIKaHR0cDovLzE5Mi4xNjguMS4xMDo4MDk2L2xpdmUvY2FuYWwtOC5tM3U4CiNFWFRJTkY6LTEgdHZnLWlkPSJsaXN0YS05IiB0dmctY2hubz0iOSIgdHZnLWxvZ289Imh0dHA6Ly8xOTIuMTY4LjEuMTA6ODA5Ni9pbWcvcG9zdGVyL2NhbmFsLTkucG5nIiBncm91cC10aXRsZT0iTGlzdGEgZGUgcHJ1ZWJhIixMaXN0YSAzCmh0dHA6Ly8xOTIuMTY4LjEuMTA6ODA5Ni9saXZlL2NhbmFsLTkubTN1OAojRVhUSU5GOi0xIHR2Zy1pZD0iY29tcHJhcy0xIiB0dmctY2hubz0iMTAiIHR2Zy1sb2dvPSJodHRwOi8vMTkyLjE2OC4xLjEwOjgwOTYvaW1nL3Bvc3Rlci9jYW5hbC03LnBuZyIgZ3JvdXAtdGl0bGU9IkNvbXByYXMiLFRlbGV2ZW50YXMKaHR0cDovLzE5Mi4xNjguMS4xMDo4MDk2L2xpdmUvY2FuYWwtNy5tM3U4CiNFWFRJTkY6LTEgdHZnLWlkPSJhZHVsdG9zLTEiIHR2Zy1jaG5vPSIxMSIgdHZnLWxvZ289Imh0dHA6Ly8xOTIuMTY4LjEuMTA6ODA5Ni9pbWcvcG9zdGVyL2NhbmFsLTgucG5nIiBncm91cC10aXRsZT0iQWR1bHRvcyIsQ2FuYWwgcGFyYSBhZHVsdG9zCmh0dHA6Ly8xOTIuMTY4LjEuMTA6ODA5Ni9saXZlL2NhbmFsLTgubTN1OAo="
+ },
+ {
+  "key": "[\"GET\",\"http://192.168.1.10:8096/items/copias\",null]",
+  "status": 200,
+  "headers": [
+   [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "302"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "date",
+    "Sun, 04 Oct 2026 12:25:59 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
+   ]
+  ],
+  "body": "eyJpZCI6ImNvcGlhcyIsImtpbmQiOiJtb3ZpZSIsInRpdGxlIjoiUGVsw61jdWxhIGNvbiBjb3BpYXMiLCJzdHJlYW0iOiIvc3RyZWFtL3YxIiwiYXVkaW8iOltdLCJjb3BpZXMiOlt7ImlkIjoiYSIsImxhbmciOiJMYXRpbm8iLCJuYW1lIjoiU2Vydmlkb3IgQSIsInN0cmVhbSI6Ii9zdHJlYW0vdjEifSx7ImlkIjoiYiIsImxhbmciOiJPcmlnaW5hbCIsIm5hbWUiOiJTZXJ2aWRvciBCIiwic3RyZWFtIjoiL3N0cmVhbS9kb2JsYWplIn0seyJpZCI6ImMiLCJsYW5nIjoiU3VidGl0dWxhZG8iLCJuYW1lIjoiU2Vydmlkb3IgQyJ9XX0="
+ },
+ {
+  "key": "[\"GET\",\"http://192.168.1.10:8096/items/copias/copies/c\",null]",
+  "status": 200,
+  "headers": [
+   [
+    "connection",
+    "keep-alive"
+   ],
+   [
+    "content-length",
+    "37"
+   ],
+   [
+    "content-type",
+    "application/json"
+   ],
+   [
+    "date",
+    "Sun, 04 Oct 2026 12:25:59 GMT"
+   ],
+   [
+    "keep-alive",
+    "timeout=5"
+   ]
+  ],
+  "body": "eyJpZCI6ImMiLCJzdHJlYW0iOiIvc3RyZWFtL2RvYmxhamUifQ=="
  }
 ]

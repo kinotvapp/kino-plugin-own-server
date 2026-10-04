@@ -1,6 +1,6 @@
 // Tu servidor -- a Kino plugin for a media server at home (Jellyfin, Emby, a NAS...), and the demo
-// plugin of the whole SDK: every apiVersion 3 feature a server of your own can use is here, each
-// one exercised by a title of the bundled reference server (README.md, "What each title shows").
+// plugin of the whole SDK: every apiVersion 3 feature a server of your own can use is here, plus (from
+// apiVersion 6) labelled and lazy copies, each one exercised by a title of the bundled reference server (README.md, "What each title shows").
 //
 // The person types the server's address, user and password in Ajustes > Plugins > Configurar; the
 // address becomes an allowed host for this install only (the manifest declares no host of its own:
@@ -132,6 +132,9 @@ export async function episodes(ref) {
 // the live channels are HLS and play as live (never downloadable). A movie with a separate audio
 // file gets it as an `audioTracks` entry, merged by the player and picked in its audio menu.
 export async function resolve(ref) {
+  // A lazy copy's own ref ("<title>|<copy>", see below): Kino asks for it only when the person picks that
+  // copy in the player's Servidor menu, the fallback reaches it or a download's copy choice does.
+  if (ref.includes("|")) return resolveCopy(ref);
   const x = await api("/items/" + encodeURIComponent(ref));
   if (x.kind === "live") return { url: base() + x.stream, mime: "application/vnd.apple.mpegurl", headers: agentHeaders() };
   const hd = kino.config.get("hd");
@@ -144,7 +147,37 @@ export async function resolve(ref) {
   if (x.audio && x.audio.length) {
     stream.audioTracks = x.audio.map((a) => ({ lang: a.lang, label: a.label, url: base() + a.stream }));
   }
+  if (x.copies && x.copies.length) return withCopies(ref, stream, x.copies);
   return stream;
+}
+
+// Labelled copies (apiVersion 6): the same video on several servers. The Stream carries its own `label`
+// and `alternatives`; the player lists them all, by label, in its Servidor menu. A copy whose stream the
+// title's answer already has is a plain `{ label, url }`; one that takes another request to find is a
+// lazy `{ label, ref }`: Kino calls resolve(ref) for it only when it is needed, so opening the title
+// never pays for it. The ref names that one copy ("<title>|<copy>") because it may be resolved minutes
+// after the title was.
+const copyLabel = (c) => c.lang + " · " + c.name;
+
+function withCopies(ref, stream, copies) {
+  const [first, ...rest] = copies;
+  return {
+    ...stream,
+    url: base() + first.stream,
+    label: copyLabel(first),
+    alternatives: rest.map((c) =>
+      c.stream
+        ? { label: copyLabel(c), url: base() + c.stream, mime: "video/mp4" }
+        : { label: copyLabel(c), ref: ref + "|" + c.id },
+    ),
+  };
+}
+
+// One copy on its own. Its own `alternatives` would be ignored (a copy never expands into more copies).
+async function resolveCopy(ref) {
+  const [id, copy] = ref.split("|");
+  const c = await api("/items/" + encodeURIComponent(id) + "/copies/" + encodeURIComponent(copy));
+  return { url: base() + c.stream, mime: "video/mp4", expiresInSeconds: 600 };
 }
 
 // Some channels only answer a known player: the person can type the User-Agent Kino presents (Configurar ->

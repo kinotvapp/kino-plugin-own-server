@@ -25,10 +25,12 @@ without owning a real Jellyfin box.
 | Title search on a loose backend (`kino.rank.*`) | `search` | search "Serie de prueba": the server also answers "Video de prueba 1"; the plugin drops it |
 | TMDB matching (`ids.tmdb`) | `item` | "Big Buck Bunny": its info page gains cast, director and tagline from TMDB |
 | Typed errors (`kino.error`) | `api` | "Error: no encontrado", "Error: limitado", "Error: región", "Error: no disponible" |
+| Labelled and lazy copies (`label` + `alternatives`, one of them `{ label, ref }` resolved through `resolve(ref)`, apiVersion 6) | `resolve` | "Película con copias": the player's Servidor menu lists "Latino · Servidor A", "Original · Servidor B" and "Subtitulado · Servidor C"; the last one is only resolved when picked |
 | Artwork on the typed server (`poster`, `backdrop`, `still`) | `item`, `episodes` | every card: its own colour and title; the info page's background; each episode's still |
 
 For the general plugin format -- the manifest, the functions, the full `kino` API, every limit --
-see the guide, [`GUIDE.md`](GUIDE.md) (the same file as in every Kino plugin repository). This README
+see the guide, [`GUIDE.md`](GUIDE.md) (the same file as in every Kino plugin repository), or its
+online version at <https://kinotvapp.github.io/kino-plugins/> (start at [Example plugins](https://kinotvapp.github.io/kino-plugins/examples/) and [The contract](https://kinotvapp.github.io/kino-plugins/contract/)). This README
 covers what's specific to the "own server" pattern and to each demo. Three powers are deliberately
 **not** in this plugin, because a server at home never needs them: Widevine DRM (the `drm`
 capability), a declared host reached over plain `http` (`insecureHttp`), and channel streams on any
@@ -61,6 +63,7 @@ The catalog, and what each entry is for:
 | Video de prueba 1 | movie | a plain progressive mp4 (`media/video1.mp4`, 3 s of test pattern): plays and downloads |
 | Big Buck Bunny | movie | the same clip, with `ids.tmdb` 10378: Kino fills in the info page from TMDB |
 | Película con doblaje | movie | a 45 s clip (`media/doblaje.mp4`, test pattern with a frame counter and a steady low tone) plus a separate 45 s audio file (`media/audio-es.m4a`, a fast high beep) as an `audioTracks` entry |
+| Película con copias | movie | the same clip as three labelled copies (`Stream.label` + `alternatives`): two come with the title, the third is a lazy `{ label, ref }` that `resolve("copias|c")` answers when the person picks it (`/items/copias/copies/c`) |
 | Serie de prueba | series | season 1 (3 episodes); lists both seasons in `seasons` |
 | Serie de prueba (Temporada 2) | series | season 2 (2 episodes), its own title |
 | Noticias 1, 2, 3 | live | channels listed by `/channels` and given to Kino with a `ref` (`canal-1` keeps the id the single test channel had in 1.1) |
@@ -101,7 +104,7 @@ In Kino, **Ajustes ▸ Plugins ▸ Agregar**, type this repository's `owner/repo
 kinotvapp/kino-plugin-own-server
 ```
 
-It needs a Kino build that knows apiVersion 3; an older one refuses it with "Este plugin necesita
+It needs a Kino build that knows apiVersion 6 (Kino 0.9.50); an older one refuses it with "Este plugin necesita
 una versión más nueva de Kino". The consent sheet lists no host (see "Why the manifest declares no
 host" below), then "Este plugin usa tu usuario y contraseña", "Se conectará a los servidores que
 escribas en su configuración" (the `url` setting), "Puede descargar videos para verlos sin conexión"
@@ -287,7 +290,7 @@ ffmpeg) draws them again from `artwork.mjs` if you change the channel list.
 To try the server while another copy is already running, start it on another port:
 `node server.mjs --port 8123`.
 
-`sdk/`, `contract.json`, `kino.d.ts` and `GUIDE.md` are a copy of Kino's plugin kit (apiVersion 3);
+`sdk/`, `contract.json`, `kino.d.ts` and `GUIDE.md` are a copy of Kino's plugin kit (apiVersion 6, Kino 0.9.50);
 `sdk/kino-rank.mjs` is the same ranking code the app runs, and `sdk/live-playlist.mjs` the same M3U
 and XMLTV rules.
 

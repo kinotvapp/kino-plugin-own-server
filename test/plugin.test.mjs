@@ -106,6 +106,23 @@ test("a movie with a separate audio file resolves with audioTracks", { skip }, a
   assert.deepEqual(s.audioTracks, [{ lang: "es-419", label: "Español (doblaje de prueba)", url: server + "/stream/audio-es" }]);
 });
 
+test("a movie with copies resolves with labelled copies, one of them lazy (apiVersion 6)", { skip }, async () => {
+  const s = await run("resolve", "copias");
+  assert.equal(s.label, "Latino · Servidor A");
+  assert.equal(s.url, server + "/stream/v1");
+  assert.equal(s.alternatives.length, 2);
+  assert.deepEqual([s.alternatives[0].label, s.alternatives[0].url], ["Original · Servidor B", server + "/stream/doblaje"]);
+  // The third copy is not resolved with the title: it carries a ref and no url.
+  assert.deepEqual([s.alternatives[1].label, s.alternatives[1].ref, s.alternatives[1].url], ["Subtitulado · Servidor C", "copias|c", undefined]);
+});
+
+test("a lazy copy's ref resolves through resolve(ref) to just that copy", { skip }, async () => {
+  const s = await run("resolve", "copias|c");
+  assert.equal(s.url, server + "/stream/doblaje");
+  assert.equal(s.mime, "video/mp4");
+  assert.equal(s.alternatives, undefined);
+});
+
 // The person's "User-Agent de los canales" setting reaches the player in the three shapes of a live channel.
 const withAgent = { ...config, userAgent: "VLC/3.0.20 LibVLC/3.0.20" };
 async function runWithAgent(fn, ...args) {
@@ -143,10 +160,10 @@ test("a live channel resolves to an HLS playlist", { skip }, async () => {
   assert.equal(s.mime, "application/vnd.apple.mpegurl");
 });
 
-test("the manifest is apiVersion 3 with channels, and declares no host of its own", async () => {
+test("the manifest is apiVersion 6 (labelled copies) with channels, and declares no host of its own", async () => {
   const m = validateManifest(readFileSync(join(root, "kino-plugin.json"), "utf8"));
   assert.equal(m.ok, true);
-  assert.equal(m.manifest.apiVersion, 3);
+  assert.equal(m.manifest.apiVersion, 6);
   assert.ok(m.manifest.capabilities.includes("channels"));
   assert.deepEqual(m.manifest.hosts, []);
   assert.equal(m.manifest.liveStreamHostsAny, false);

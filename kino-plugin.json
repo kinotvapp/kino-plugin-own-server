@@ -1,8 +1,8 @@
 {
   "id": "own-server",
   "name": "Tu servidor",
-  "version": "1.3.0",
-  "apiVersion": 3,
+  "version": "1.4.0",
+  "apiVersion": 6,
   "entry": "plugin.js",
   "description": "Ve el contenido de tu propio servidor de video. Necesita que escribas su dirección.",
   "author": "kinotvapp",

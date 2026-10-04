@@ -12,6 +12,7 @@
 // The catalog exercises every feature of the plugin SDK (README.md, "What each title shows"):
 //   - movies that stream a progressive mp4 (so they can be downloaded), one of them with a TMDB id;
 //   - a movie with a separate audio file (a "dub" the player merges into the video);
+//   - a movie with three labelled copies, one of them found only when it is asked for (apiVersion 6);
 //   - a series whose two seasons are separate titles (the plugin answers `seasons`);
 //   - nine live channels, each an endless HLS playlist looping three bundled 2-second segments of
 //     its own (media/live/canal-N/), listed for Kino's En vivo tab in the three shapes a plugin can
@@ -98,6 +99,17 @@ const CATALOG = [
     audio: [{ lang: "es-419", label: "Español (doblaje de prueba)", file: "audio-es" }],
   },
   {
+    // Three copies of the same clip, the way a source with several servers has them (labelled copies,
+    // apiVersion 6). `lazy` ones are not in the title's answer: their stream is only found by asking
+    // /items/<id>/copies/<copy>, the way a real source needs a page of its own per server.
+    id: "copias", kind: "movie", title: "Película con copias", year: 2025, stream: "v1",
+    copies: [
+      { id: "a", lang: "Latino", name: "Servidor A", stream: "v1" },
+      { id: "b", lang: "Original", name: "Servidor B", stream: "doblaje" },
+      { id: "c", lang: "Subtitulado", name: "Servidor C", stream: "doblaje", lazy: true },
+    ],
+  },
+  {
     id: "serie-t1", kind: "series", title: "Serie de prueba", year: 2025, show: "serie", season: 1,
     episodes: ["El comienzo", "La prueba", "El final de temporada"],
   },
@@ -153,6 +165,10 @@ function detail(x) {
     return {
       id: x.id, kind: x.kind, title: x.title, stream: "/stream/" + x.stream,
       audio: (x.audio || []).map((a) => ({ lang: a.lang, label: a.label, stream: "/stream/" + a.file })),
+      // A lazy copy lists no stream here: /items/<id>/copies/<copy> gives it.
+      ...(x.copies && {
+        copies: x.copies.map((c) => ({ id: c.id, lang: c.lang, name: c.name, stream: c.lazy ? undefined : "/stream/" + c.stream })),
+      }),
     };
   }
   if (x.kind === "live") return { id: x.id, kind: "live", title: x.title, stream: "/live/" + x.id + ".m3u8" };
@@ -275,6 +291,15 @@ const server = createServer((req, res) => {
     if (!item) return json(res, 404, { error: "not found" });
     if (item.errorStatus) return json(res, item.errorStatus, { error: "demo error " + item.errorStatus });
     return json(res, 200, detail(item));
+  }
+
+  const copyMatch = /^\/items\/([^/]+)\/copies\/([^/]+)$/.exec(url.pathname);
+  if (read && copyMatch) {
+    if (!authed(req)) return json(res, 401, { error: "no token" });
+    const item = CATALOG.find((x) => x.id === decodeURIComponent(copyMatch[1]));
+    const copy = item && (item.copies || []).find((c) => c.id === decodeURIComponent(copyMatch[2]));
+    if (!copy) return json(res, 404, { error: "not found" });
+    return json(res, 200, { id: copy.id, stream: "/stream/" + copy.stream });
   }
 
   // /img/poster/<id>.png, /img/backdrop/<id>.png (also an episode's still); /img/<id> is the
