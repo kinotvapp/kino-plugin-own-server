@@ -1087,8 +1087,25 @@ export function createKino(manifest, { appVersion = "sdk", lang = "es-CO", stora
           throw kinoError("browser_unavailable", "el kit de Node no tiene navegador: kino.browser.capture solo funciona en la app");
         },
         ...(contract.apiVersion >= contract.browser.page.apiVersion ? {
-          async page() {
+          // The app's order: the request is checked first (invalid_request, as its prelude does), then the manifest's
+          // approval (a plugin without "browser": "pages" gets not_allowed, as the app's PluginBrowser answers), and
+          // only then is there no browser.
+          async page(url, opts) {
             await null;
+            const o = opts === undefined || opts === null ? {} : opts;
+            const P = contract.browser.page;
+            if (o.timeoutMs !== undefined && (!Number.isInteger(o.timeoutMs) || o.timeoutMs < 1 || o.timeoutMs > P.maxTimeoutMs)) {
+              throw kinoError("invalid_request", `timeoutMs acepta de 1 a ${P.maxTimeoutMs} ms`);
+            }
+            if (o.waitFor !== undefined && o.waitFor !== null) {
+              const isRx = o.waitFor instanceof RegExp;
+              const w = isRx ? o.waitFor.source : String(o.waitFor);
+              const flags = isRx ? o.waitFor.flags.replace(/[^ms]/g, "") : "";
+              if (w.length < 1 || w.length > P.maxWaitForChars) throw kinoError("invalid_request", `waitFor debe tener de 1 a ${P.maxWaitForChars} caracteres`);
+              try { new RegExp(w, "i" + flags); } catch { throw kinoError("invalid_request", "waitFor no es una expresión regular válida"); }
+            }
+            const pages = manifest && (manifest.browserPages === true || (manifest.browserPages === undefined && manifest.browser === contract.manifest.browser.pagesValue));
+            if (!pages) throw kinoError("not_allowed", `este plugin no tiene permiso para leer páginas ("browser": "${contract.manifest.browser.pagesValue}")`);
             throw kinoError("browser_unavailable", "el kit de Node no tiene navegador: kino.browser.page solo funciona en la app");
           },
         } : {}),

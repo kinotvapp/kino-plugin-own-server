@@ -136,8 +136,9 @@ export function validateManifest(text, { knownPermissions = contract.permissions
   if (unknownCap !== undefined) return bad("capabilities", `Capacidad desconocida: "${unknownCap}"`);
   const tooNewCap = caps.find((c) => (contract.capabilities.apiVersions[c] ?? 1) > o.apiVersion);
   if (tooNewCap !== undefined) return bad("capabilities", `Esta capacidad necesita apiVersion ${contract.capabilities.apiVersions[tooNewCap]}`);
-  // A capability declared on its own (a subtitle provider: `["subtitles"]`) needs neither `required` nor `atLeastOneOf`.
-  const standalone = caps.length === 1 && contract.capabilities.standalone.includes(caps[0]);
+  // Capabilities that play nothing, declared without any other (a subtitle provider, a tracker, or both): neither
+  // `required` nor `atLeastOneOf` applies.
+  const standalone = caps.length > 0 && caps.every((c) => contract.capabilities.standalone.includes(c));
   const missingRequiredCap = contract.capabilities.required.find((c) => !caps.includes(c));
   if (!standalone && missingRequiredCap !== undefined) return bad("capabilities", `El plugin debe declarar "${missingRequiredCap}"`);
   if (!standalone && !contract.capabilities.atLeastOneOf.some((c) => caps.includes(c))) {
@@ -175,7 +176,8 @@ export function validateManifest(text, { knownPermissions = contract.permissions
     if (!ok) return bad("categories", m.categories.message);
   }
   const categories = o.categories || [];
-  // apiVersion 6: a development aid the app reads (errors on screen, the Registro page). Below it, unknown and ignored.
+  // apiVersion 6: the default of the person's "Modo debug" switch, which every plugin has (errors on screen, the
+  // Registro page). Below it, unknown and ignored.
   let debug = false;
   if (o.debug !== undefined && o.apiVersion >= m.debug.apiVersion) {
     if (typeof o.debug !== "boolean") return bad("debug", 'El campo "debug" debe ser true o false');
@@ -301,7 +303,9 @@ function validateSettings(list, apiVersion = contract.maxApiVersion) {
     const type = s.types[o.type];
     if (!type || typeof o.type !== "string") return `El ajuste "${key}" tiene un tipo desconocido`;
     if (type.hasValue === false && apiVersion < type.apiVersion) return `El ajuste "${key}" es de tipo ${o.type}: necesita apiVersion ${type.apiVersion}`;
-    if (typeof o.hint === "string" && o.hint.trim().length > s.hintMaxChars) return `La ayuda del ajuste "${key}" pasa de ${s.hintMaxChars} caracteres`;
+    // A section's hint is its explanation and wraps on screen: sectionHintMaxChars (PluginSettings.MAX_SECTION_HINT_CHARS).
+    const maxHint = o.type === "section" ? s.sectionHintMaxChars : s.hintMaxChars;
+    if (typeof o.hint === "string" && o.hint.trim().length > maxHint) return `La ayuda del ajuste "${key}" pasa de ${maxHint} caracteres`;
     if (o.required !== undefined && typeof o.required !== "boolean") return `"required" del ajuste "${key}" debe ser true o false`;
     if (o.required === true && !type.canBeRequired) return `El ajuste "${key}" no puede ser obligatorio`;
     // Below apiVersion 6 the key is unknown, so ignored like any other unknown key (as in the app).
@@ -705,6 +709,55 @@ function alternateHostsOf(value, alternateOk, drop) {
  * URL checked like a Stream's side subtitles (any public host with `streamHosts: "any"`), `format` only vtt/srt, `lang` 20
  * characters ("und" when blank), `label` maxSubtitleLabelChars; maxSubtitles at most, a repeated URL kept once.
  */
+/**
+ * A `segments()` answer as the app's Segments.parse keeps it: `{ type, startMs, endMs }` entries, each dropped on its own
+ * (never the whole answer): an unknown type, times that are not whole ms, start below 0, shorter than minLengthMs; with
+ * [durationMs] known, a start at or past it or an end more than endSlackMs past it (an end within is cut to it); one
+ * overlapping an earlier kept one of the same type. maxEntriesRead read, maxSegments kept, earliest first.
+ */
+export function segmentsAnswer(value, durationMs, drop = () => {}) {
+  const c = contract.segments;
+  if (!Array.isArray(value)) { if (value !== null) drop("segments: the answer is not an array"); return []; }
+  if (value.length > c.maxEntriesRead) drop(`segments: only the first ${c.maxEntriesRead} of ${value.length} entries are read`);
+  const known = Number.isInteger(durationMs) && durationMs > 0;
+  const whole = (v) => typeof v === "number" && Number.isInteger(v) && Math.abs(v) <= 1e15;
+  const read = [];
+  for (const [i, e] of value.slice(0, c.maxEntriesRead).entries()) {
+    if (e === null || typeof e !== "object" || Array.isArray(e)) { drop(`segments: entry ${i} is not an object`); continue; }
+    if (!c.types.includes(e.type)) { drop(`segments: entry ${i}: unknown type`); continue; }
+    if (!whole(e.startMs) || !whole(e.endMs)) { drop(`segments: entry ${i}: startMs and endMs must be whole numbers of ms`); continue; }
+    const start = e.startMs;
+    let end = e.endMs;
+    if (start < 0) { drop(`segments: entry ${i}: startMs below 0`); continue; }
+    if (known) {
+      if (start >= durationMs) { drop(`segments: entry ${i}: starts past the file's end`); continue; }
+      if (end > durationMs + c.endSlackMs) { drop(`segments: entry ${i}: ends past the file's end`); continue; }
+      end = Math.min(end, durationMs);
+    }
+    if (end - start < c.minLengthMs) { drop(`segments: entry ${i}: shorter than ${c.minLengthMs} ms or ends before it starts`); continue; }
+    read.push({ type: e.type, startMs: start, endMs: end });
+  }
+  read.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  const kept = [];
+  for (const seg of read) {
+    if (kept.some((k) => k.type === seg.type && seg.startMs < k.endMs && k.startMs < seg.endMs)) { drop(`segments: a ${seg.type} overlaps another`); continue; }
+    if (kept.length === c.maxSegments) { drop(`segments: more than ${c.maxSegments} segments`); break; }
+    kept.push(seg);
+  }
+  return kept;
+}
+
+/** What the app's skip button takes from [segments] (Segments.skipTimes): the opening and the ending's start, or null. */
+export function segmentSkip(segments) {
+  const c = contract.segments;
+  const first = (types) => segments.filter((s) => types.includes(s.type)).sort((a, b) => a.startMs - b.startMs)[0];
+  const opening = first(c.openingTypes);
+  let ending = first(c.endingTypes);
+  if (ending && opening && ending.startMs < opening.endMs) ending = undefined;
+  if (!opening && !ending) return null;
+  return { openingStartMs: opening ? opening.startMs : null, openingEndMs: opening ? opening.endMs : null, endingStartMs: ending ? ending.startMs : null };
+}
+
 function subtitleTracks(value, { manifest, servers }, drop) {
   if (!Array.isArray(value)) { drop("subtitles: the answer is not a list"); return []; }
   const check = urlChecker(manifest, servers);
@@ -1197,7 +1250,7 @@ export function checkSettingsOutput(fn, value, manifest, scrub = (t) => t, drop 
  * `liveChannel`: the `resolve` answer is for a live channel's ref (the app knows; the kit is told),
  * so `liveStreamHosts: "any"` applies to its stream URL.
  */
-export function checkOutput(fn, value, manifest, servers = [], { liveChannel = false, migrateInput = null } = {}) {
+export function checkOutput(fn, value, manifest, servers = [], { liveChannel = false, migrateInput = null, segmentsQuery = null } = {}) {
   const drops = [];
   const drop = (m) => { drops.push(m); };
   const ctx = {
@@ -1242,6 +1295,10 @@ export function checkOutput(fn, value, manifest, servers = [], { liveChannel = f
     case "guide": return { value: guide(parsed, drop), drops };
     case "migrate": return migrateAnswer(parsed, migrateInput || { kind: "title" });
     case "subtitles": return { value: subtitleTracks(parsed, { manifest, servers }, drop), drops };
+    // Kino only needs track() to return (anything, `{ ok: true }` by convention) or throw: a kino.error code says whether to retry.
+    case "track": return { value: parsed, drops };
+    // apiVersion 7's segments: what the app's Segments.parse keeps, judged against the query's durationMs.
+    case "segments": return { value: segmentsAnswer(parsed, segmentsQuery?.durationMs, drop), drops };
     default: throw new Error(`unknown function ${fn}`);
   }
 }

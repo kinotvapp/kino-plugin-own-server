@@ -30,6 +30,13 @@
 //   node sdk/run.mjs <plugin dir> subtitles tmdb:1396 1 2           (an episode: the SERIES' id, season, episode)
 //   node sdk/run.mjs <plugin dir> subtitles '{"imdbId":"tt0903747","kind":"series","season":1,"episode":2}'
 //   (KINO_LANGS=es,en: the person's subtitle languages, in order)
+// Tracking (apiVersion 7, the "tracking" capability): one event, as the app builds it (a sample movie by default)
+//   node sdk/run.mjs <plugin dir> track start
+//   node sdk/run.mjs <plugin dir> track watched '{"kind":"episode","ids":{},"show":{"title":"Breaking Bad","ids":{"tmdb":1396}},"season":1,"episode":2}'
+// Segments (apiVersion 7, the "segments" capability): the query as the app builds it, then what Kino keeps of the answer
+//   node sdk/run.mjs <plugin dir> segments tt0133093 [durationMs]                 (a movie)
+//   node sdk/run.mjs <plugin dir> segments tmdb:1396 1 2 [durationMs]             (an episode: the SHOW's id, season, episode)
+//   node sdk/run.mjs <plugin dir> segments '{"kind":"episode","ids":{"tmdb":62085},"show":{"ids":{"tmdb":1396}},"season":1,"episode":2,"durationMs":2880000}'
 // Options (before the plugin path):
 //   --config key=value     a setting's value (repeatable); also read from sdk/config.json
 //   --record <file>        save every kino.fetch answer to <file> (JSON)
@@ -47,12 +54,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { checkOutput, checkSettingsOutput, contract, markSearchHits, validateManifest } from "./contract.mjs";
+import { checkOutput, checkSettingsOutput, contract, markSearchHits, segmentSkip, validateManifest } from "./contract.mjs";
 import { contrast, formatRatio, resolvePalette } from "./palette.mjs";
 import { createKino, errorReport, signingLane } from "./kino-shim.mjs";
 import { channelLines, download, guideFor, keepStart, loadPlaylist, summarisePlaylist, summaryLines } from "./live-playlist.mjs";
 
-const FUNCTIONS = ["search", "home", "browse", "episodes", "resolve", "migrate", "section", "categories", "subtitles"];
+const FUNCTIONS = ["search", "home", "browse", "episodes", "resolve", "migrate", "section", "categories", "subtitles", "track", "segments"];
 // apiVersion 6's settings form: not capabilities, so no capability check; the app runs them even before a required setting is typed.
 const SETTINGS_FUNCTIONS = ["settingsStatus", "action", "validateSettings"];
 // `live <sub>` names one of the channels capability's exports.
@@ -62,6 +69,8 @@ const USAGE = "usage: node sdk/run.mjs [--config k=v] [--record f | --replay f] 
   + "       node sdk/run.mjs [--config k=v] [--raw] <plugin folder> <settingsStatus | action <key> | validateSettings '<json>'>\n"
   + "       node sdk/run.mjs [--config k=v] <plugin folder> live <categories | channels <categoryId> [cursor] | guide <id,id> | search <query>>\n"
   + "       node sdk/run.mjs [--config k=v] <plugin folder> subtitles <ttID | tmdb:ID | JSON> [season episode]\n"
+  + "       node sdk/run.mjs [--config k=v] <plugin folder> track <start|progress|stop|watched> [JSON]\n"
+  + "       node sdk/run.mjs [--config k=v] <plugin folder> segments <ttID [durationMs] | tmdb:ID season episode [durationMs] | JSON>\n"
   + "       node sdk/run.mjs live playlist <url|file> [--epg <url|file>]";
 const here = dirname(fileURLToPath(import.meta.url));
 
@@ -194,7 +203,7 @@ async function main() {
   }
   if (fn === "section" && !manifest.section) return fail('the manifest does not declare "section"');
   if (fn === "categories" && !(manifest.apiVersion >= contract.output.categories.apiVersion && manifest.capabilities.includes("browse"))) return fail("categories needs apiVersion 6 and the browse capability");
-  const capability = Object.values(LIVE).includes(fn) ? "channels" : fn === "sign" ? "resolve" : fn;
+  const capability = Object.values(LIVE).includes(fn) ? "channels" : fn === "sign" ? "resolve" : fn === contract.tracking.export ? contract.tracking.capability : fn;
   // `subtitles` may be exported by any plugin without the capability (Kino asks whoever exports it).
   const anyPlugin = contract.capabilities.anyPluginExports.includes(fn);
   if (!anyPlugin && !SETTINGS_FUNCTIONS.includes(fn) && fn !== "section" && fn !== "categories" && !manifest.capabilities.includes(capability)) return fail(`the manifest does not declare "${capability}" in capabilities`);
@@ -253,7 +262,7 @@ async function main() {
     }
     let checked;
     try {
-      checked = checkOutput(fn, out, manifest, servers, { liveChannel: fn === "resolve" && opts.live, migrateInput: fn === "migrate" ? JSON.parse(rest[0] || "null") : null });
+      checked = checkOutput(fn, out, manifest, servers, { liveChannel: fn === "resolve" && opts.live, migrateInput: fn === "migrate" ? JSON.parse(rest[0] || "null") : null, segmentsQuery: fn === "segments" ? segmentsArg(rest) : null });
     } catch (e) {
       // Refused only by host, and a live channel's ref would pass: say how to check it as one.
       if (fn === "resolve" && !opts.live && manifest.liveStreamHostsAny) {
@@ -270,6 +279,7 @@ async function main() {
       const note = unmarkedSearchNote(marked);
       if (note) stderr(`aviso: ${note}`);
     }
+    if (fn === "segments") stderr(`el botón de Kino: ${JSON.stringify(segmentSkip(value))}`);
     adultLines(value).forEach((l) => stderr(l));
     const noSign = fn === "resolve" ? signExportProblem(value, plugin) : null;
     if (noSign) { stderr(`✗ ${noSign}`); return 1; }
@@ -362,7 +372,8 @@ async function livePlaylist(src, epg) {
 
 /**
  * `subtitles()`'s argument as the app's PluginSubtitleSource builds it: `{ imdbId?, tmdbId?, kind, season?, episode?, title?,
- * year?, languages }`. [rest]: `tt…` or `tmdb:<id>` (then season and episode for an episode), or the whole object as JSON.
+ * year?, languages, file? }` (`file: { hash?, size?, name? }` only in the JSON form). [rest]: `tt…` or `tmdb:<id>` (then
+ * season and episode for an episode), or the whole object as JSON.
  */
 export function subtitlesArg(rest) {
   const arg = String(rest[0] === undefined ? "" : rest[0]).trim();
@@ -380,6 +391,47 @@ export function subtitlesArg(rest) {
   return out;
 }
 
+/**
+ * `track()`'s argument as the app's TrackingEvents builds it: `{ id, type, at, kind, ids, title?, year?, show?, season?,
+ * episode?, positionMs?, durationMs?, progress?, paused? }`. [rest]: the type, then optional JSON merged over a sample movie
+ * (for an episode, pass `kind`, `ids` -- the EPISODE's own --, `show`, `season` and `episode`).
+ */
+export function trackArg(rest) {
+  const type = String(rest[0] === undefined ? "start" : rest[0]).trim();
+  if (!contract.tracking.types.includes(type)) throw new Error(`track needs a type: ${contract.tracking.types.join(", ")}`);
+  const durationMs = 8_160_000;
+  const positionMs = type === "watched" ? durationMs - 120_000 : type === "start" ? 0 : 3_600_000;
+  const event = {
+    id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`, type, at: Date.now(), kind: "movie",
+    ids: { imdb: "tt0133093", tmdb: 603 }, title: "The Matrix", year: 1999, positionMs, durationMs, progress: positionMs / durationMs,
+  };
+  const extra = rest[1] === undefined ? "" : String(rest[1]).trim();
+  if (!extra) return event;
+  try { return { ...event, ...JSON.parse(extra), type }; }
+  catch (e) { throw new Error(`the track argument must be a JSON object: ${e.message}`); }
+}
+
+/**
+ * `segments()`'s argument as the app's Segments.query builds it: `{ kind, ids, show?: { ids }, season?, episode?, durationMs? }`.
+ * [rest]: `tt…` (a movie) or `tmdb:<id>` (a movie, or with season and episode the SHOW's id of an episode, whose own ids
+ * are then unknown: `ids` empty), an optional durationMs last; or the whole object as JSON.
+ */
+export function segmentsArg(rest) {
+  const arg = String(rest[0] === undefined ? "" : rest[0]).trim();
+  if (arg.startsWith("{")) {
+    try { return JSON.parse(arg); }
+    catch (e) { throw new Error(`the segments argument starts with { but is not valid JSON: ${e.message}`); }
+  }
+  const id = /^tt\d{5,10}$/.test(arg) ? { imdb: arg } : /^tmdb:\d+$/.test(arg) ? { tmdb: Number(arg.slice(5)) } : null;
+  if (!id) throw new Error("segments needs an IMDb id (tt…), tmdb:<id> or a JSON object");
+  const nums = rest.slice(1).map(Number);
+  const episode = nums.length >= 2 && nums[0] >= 0 && nums[1] > 0;
+  const duration = nums[episode ? 2 : 0];
+  const out = episode ? { kind: "episode", ids: {}, show: { ids: id }, season: nums[0], episode: nums[1] } : { kind: "movie", ids: id };
+  if (Number.isInteger(duration) && duration > 0) out.durationMs = duration;
+  return out;
+}
+
 /** The argument each function gets, exactly as the app builds it. */
 export async function call(plugin, fn, rest, opts = {}) {
   const arg = rest[0] === undefined ? "" : rest[0];
@@ -394,6 +446,8 @@ export async function call(plugin, fn, rest, opts = {}) {
   if (fn === "liveChannels") return plugin.liveChannels({ categoryId: arg, cursor: rest[1] === undefined ? null : rest[1] });
   if (fn === "liveSearch") return plugin.liveSearch({ query: arg.trim() });
   if (fn === "subtitles") return plugin.subtitles(subtitlesArg(rest));
+  if (fn === "track") return plugin.track(trackArg(rest));
+  if (fn === "segments") return plugin.segments(segmentsArg(rest));
   if (fn === "guide") {
     const from = Date.now() - 2 * 3600 * 1000;
     return plugin.guide({ channelIds: arg ? arg.split(",") : [], from, to: from + contract.live.maxGuideWindowMs });

@@ -10,14 +10,14 @@ import { gzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { checkOutput, checkSettingsOutput, contract, markSearchHits, requiredExports, validateManifest } from "../contract.mjs";
+import { checkOutput, checkSettingsOutput, contract, markSearchHits, requiredExports, segmentSkip, segmentsAnswer, validateManifest } from "../contract.mjs";
 import { createKino, errorReport, shownSentence, signingLane } from "../kino-shim.mjs";
 import { filterRelevant, shortQuery, sortBySimilarity } from "../kino-rank.mjs";
 import { contrast, deltaE, formatRatio, luminance, resolvePalette } from "../palette.mjs";
 import { consentLines, KEY_PAIRS_OLD_API, validate } from "../validate.mjs";
 import { TABLES } from "../guide-tables.mjs";
 import { scaffold } from "../init.mjs";
-import { adultLines, call, parseArgs, subtitlesArg } from "../run.mjs";
+import { adultLines, call, parseArgs, segmentsArg, subtitlesArg } from "../run.mjs";
 import { decodeCipherKey, normalizeBinding, seal, sealTyped } from "../seal.mjs";
 import { ADULT_GROUPS, OPEN_END_MS, decodeM3u, keepStart, loadPlaylist, normaliseName, parseM3u, parseXmltv, parseXmltvTime, summarisePlaylist, summaryLines } from "../live-playlist.mjs";
 
@@ -31,10 +31,10 @@ const manifest = (extra = {}) => JSON.stringify({
 });
 
 test("contract.json is the one the app pins", () => {
-  assert.equal(contract.apiVersion, 6);
+  assert.equal(contract.apiVersion, 7);
   // apiVersion 5 stays what Kino 0.9.45 made it: the author-signed entry, nothing else.
   assert.equal(contract.manifest.signature.apiVersion, 5);
-  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels", "migrate", "scopedSearch", "meta", "subtitles"]);
+  assert.deepEqual(contract.capabilities.names, ["search", "home", "browse", "episodes", "resolve", "download", "drm", "channels", "migrate", "scopedSearch", "meta", "subtitles", "tracking", "segments"]);
   assert.deepEqual(contract.capabilities.declarative, ["download", "drm", "scopedSearch"]);
   assert.deepEqual(contract.permissions, []);
 });
@@ -1354,7 +1354,7 @@ test("secrets: parsed with apiVersion 4, ignored below it, and its Spanish messa
 });
 
 test("migrate: a consent line, and an update that adds it re-asks like any new reach", () => {
-  assert.deepEqual(contract.capabilities.needsApproval, ["download", "drm", "channels", "migrate"]);
+  assert.deepEqual(contract.capabilities.needsApproval, ["download", "drm", "channels", "migrate", "tracking"]);
   assert.deepEqual(consentLines(validateManifest(manifest({ apiVersion: 6, capabilities: ["search", "resolve", "migrate"] })).manifest),
     [{ text: "Revisar lo que tienes guardado (biblioteca, historial, favoritos) para pasarlo a este plugin", danger: false }]);
 });
@@ -3277,8 +3277,9 @@ test("run.mjs runs the settings exports and prints what the app keeps", () => {
   rmSync(join(demo, ".kino-storage.json"), { force: true });
 });
 
-test("debug: an optional boolean from apiVersion 6, ignored below; on, it is a note for the author", async () => {
-  assert.deepEqual(contract.manifest.debug, { apiVersion: 6 });
+test("debug: an optional boolean from apiVersion 6, ignored below; on (the switch's default), it is a note for the author", async () => {
+  assert.equal(contract.manifest.debug.apiVersion, 6);
+  assert.equal(contract.manifest.debug.default, false);
   assert.equal(validateManifest(manifest({ apiVersion: 6 })).manifest.debug, false);
   assert.equal(validateManifest(manifest({ apiVersion: 6, debug: true })).manifest.debug, true);
   assert.equal(validateManifest(manifest({ apiVersion: 4, debug: true })).manifest.debug, false);
@@ -3299,7 +3300,8 @@ test("debug: an optional boolean from apiVersion 6, ignored below; on, it is a n
     writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 6, debug: true }));
     const r = await validate(dir);
     assert.equal(r.ok, true);
-    assert.deepEqual(authorNotes(r.notes), ['Modo debug activo ("debug": true): úsalo mientras desarrollas y quítalo antes de publicar el plugin']);
+    assert.deepEqual(authorNotes(r.notes), [contract.manifest.debug.defaultOnNote]);
+    assert.match(contract.manifest.debug.defaultOnNote, /^Modo debug encendido de entrada/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -3484,7 +3486,7 @@ test("the guide's kino.fetch limits row names every fetch limit the app enforces
 // apiVersion 5 is Kino 0.9.45's (the author's signature, nothing else): a v5 manifest using an apiVersion 6
 // field is refused, or reads it exactly as those apps do (an unknown field, ignored).
 test("apiVersion 5 manifests read as Kino 0.9.45 and 0.9.46 read them: every apiVersion 6 field is refused or ignored", () => {
-  assert.equal(contract.maxApiVersion, 6);
+  assert.equal(contract.maxApiVersion, 7);
   const v5 = (extra) => validateManifest(manifest({ apiVersion: 5, ...extra }));
   const ignored = v5({ debug: true, section: { label: "Mía" }, theme: { accent: "#3D5AFE" } });
   assert.equal(ignored.ok, true);
@@ -3506,7 +3508,7 @@ test("apiVersion 5 manifests read as Kino 0.9.45 and 0.9.46 read them: every api
 // apiVersion 5 shipped in Kino 0.9.45 (signature.fromApp); 6 first ships in 0.9.50 (nothing ships until the built-in source removal is done).
 test("each apiVersion above 4 names the Kino it first ships in, and validate's note reads it", async () => {
   assert.equal(contract.manifest.signature.fromApp, "0.9.45");
-  assert.deepEqual(contract.apiVersionFromApp, { "6": "0.9.50" });
+  assert.deepEqual(contract.apiVersionFromApp, { "6": "0.9.50", "7": "0.9.51" });
   const dir = mkdtempSync(join(tmpdir(), "kino-from-app-"));
   try {
     writeFileSync(join(dir, "plugin.js"), "export async function search(){ return { items: [] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
@@ -3766,8 +3768,8 @@ test("browser pages: its own wider line, true keeps the old one, and page answer
   assert.equal(v({ browser: true }).manifest.browserPages, false);
   assert.equal(v({ browser: "pages" }, 5).manifest.browser, false);
   assert.deepEqual(v({ browser: "page" }), { ok: false, field: "browser", message: contract.manifest.browser.notBooleanMessage });
-  assert.equal(contract.maxApiVersion, 6);
-  assert.equal(v({}, 7).ok, false);
+  assert.equal(contract.maxApiVersion, 7);
+  assert.equal(v({}, 8).ok, false);
   const dir = mkdtempSync(join(tmpdir(), "kino-browser-page-"));
   try {
     writeFileSync(join(dir, "plugin.js"), "export async function search(q){ try { await kino.browser.page('https://example.com/?s=' + q, { waitFor: 'article' }) } catch (e) { return [{ id: e.code, title: e.code, ref: e.code, kind: 'movie' }] } }\nexport async function resolve(){ return { url: 'https://example.com/a.m3u8' } }");
@@ -3778,6 +3780,108 @@ test("browser pages: its own wider line, true keeps the old one, and page answer
     const val = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
     assert.equal(val.status, 0, val.stderr + val.stdout);
     assert.match(val.stdout + val.stderr, /kino\.browser\.page/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("browser page in the kit mirrors the app: invalid_request first, not_allowed without \"pages\", then browser_unavailable", async () => {
+  const code = async (manifestExtra, ...args) => {
+    const { kino } = createKino(validateManifest(manifest({ apiVersion: 6, ...manifestExtra })).manifest);
+    try { await kino.browser.page(...args); return "ok"; } catch (e) { return e.code; }
+  };
+  assert.equal(await code({ browser: "pages" }, "https://example.com/", { timeoutMs: 999999 }), "invalid_request");
+  assert.equal(await code({ browser: "pages" }, "https://example.com/", { waitFor: "(" }), "invalid_request");
+  assert.equal(await code({ browser: "pages" }, "https://example.com/", { waitFor: "" }), "invalid_request");
+  assert.equal(await code({ browser: true }, "https://example.com/"), "not_allowed");
+  assert.equal(await code({ browser: "pages" }, "https://example.com/", { waitFor: /item.+end/s }), "browser_unavailable");
+});
+
+// apiVersion 7's tracking: a capability that plays nothing (alone, or with subtitles), approved in red with the plugin's
+// hosts named, refused below 7; run.mjs hands track() the app's event shape.
+test("tracking: apiVersion 7, standalone, its red consent line naming the hosts, and run.mjs calls track()", async () => {
+  const v = (extra, api = 7) => validateManifest(manifest({ apiVersion: api, ...extra }));
+  assert.equal(v({ capabilities: ["tracking"] }).ok, true);
+  assert.equal(v({ capabilities: ["tracking", "subtitles"] }).ok, true);
+  assert.equal(v({ capabilities: ["search", "resolve", "tracking"] }).ok, true);
+  assert.deepEqual(v({ capabilities: ["tracking"] }, 6), { ok: false, field: "capabilities", message: "Esta capacidad necesita apiVersion 7" });
+  assert.deepEqual(requiredExports(["tracking"]), ["track"]);
+  const lines = (hosts) => consentLines(v({ capabilities: ["tracking"], hosts }).manifest);
+  assert.deepEqual(lines(["seenr.app"]), [{ text: "Le contará a seenr.app qué ves y cuándo lo terminas", danger: true }]);
+  assert.deepEqual(lines(["a.com", "b.com", "c.com", "d.com", "e.com"]).map((l) => l.text), ["Le contará a a.com, b.com, c.com y 2 más qué ves y cuándo lo terminas"]);
+  const dir = mkdtempSync(join(tmpdir(), "kino-tracking-"));
+  try {
+    writeFileSync(join(dir, "plugin.js"), "export async function track(e){ return { ok: true, type: e.type, kind: e.kind, imdb: e.ids.imdb, id: typeof e.id } }");
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 7, capabilities: ["tracking"], hosts: ["seenr.app"] }));
+    const r = spawnSync(process.execPath, [join(here, "..", "run.mjs"), dir, "track", "watched"], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), { ok: true, type: "watched", kind: "movie", imdb: "tt0133093", id: "string" });
+    const val = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(val.status, 0, val.stderr + val.stdout);
+    assert.match(val.stdout + val.stderr, /Le contará a seenr\.app/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+// apiVersion 7's segments: a capability that plays nothing, a plain consent line (no approval), and the answer judged
+// entry by entry exactly as the app's Segments.parse does (SegmentsTest pins the same vectors).
+test("segments: apiVersion 7, standalone, plain consent line, and each bad entry dropped on its own", () => {
+  const v = (extra, api = 7) => validateManifest(manifest({ apiVersion: api, ...extra }));
+  assert.equal(v({ capabilities: ["segments"] }).ok, true);
+  assert.equal(v({ capabilities: ["segments", "subtitles", "tracking"] }).ok, true);
+  assert.deepEqual(v({ capabilities: ["segments"] }, 6), { ok: false, field: "capabilities", message: "Esta capacidad necesita apiVersion 7" });
+  assert.deepEqual(requiredExports(["segments"]), ["segments"]);
+  assert.equal(contract.capabilities.needsApproval.includes("segments"), false);
+  assert.deepEqual(consentLines(v({ capabilities: ["segments"] }).manifest), [{ text: "Agrega el botón para saltar la intro y los créditos", danger: false }]);
+
+  const drops = [];
+  const kept = segmentsAnswer([
+    { type: "intro", startMs: 60000, endMs: 150000 },
+    { type: "intro", startMs: 100000, endMs: 170000 },            // overlaps the first intro
+    { type: "recap", startMs: 0, endMs: 60000 },
+    { type: "credits", startMs: 1300000, endMs: 1442000 },        // cut to the length
+    { type: "outro", startMs: 1300000, endMs: 1500000 },          // ends far past the file
+    { type: "preview", startMs: 1450000, endMs: 1460000 },        // starts past the file
+    { type: "opening", startMs: 1, endMs: 5000 },                 // unknown type
+    { type: "intro", startMs: "1", endMs: 5000 },                 // not a number
+    { type: "intro", startMs: 2000.5, endMs: 5000 },              // not whole ms
+    { type: "intro", startMs: -5, endMs: 5000 },
+    { type: "outro", startMs: 900000, endMs: 900500 },            // too short
+    null, [], "intro",
+  ], 1440000, (d) => drops.push(d));
+  assert.deepEqual(kept, [
+    { type: "recap", startMs: 0, endMs: 60000 },
+    { type: "intro", startMs: 60000, endMs: 150000 },
+    { type: "credits", startMs: 1300000, endMs: 1440000 },
+  ]);
+  assert.equal(drops.length, 11);
+  assert.deepEqual(segmentSkip(kept), { openingStartMs: 60000, openingEndMs: 150000, endingStartMs: 1300000 });
+  assert.deepEqual(segmentsAnswer({ intro: [0, 1] }, 0, () => {}), []);
+  assert.deepEqual(segmentsAnswer(null, 0, () => { throw new Error("null is no drop"); }), []);
+  const many = Array.from({ length: 150 }, (_, i) => ({ type: "recap", startMs: i * 10000, endMs: i * 10000 + 5000 }));
+  assert.equal(segmentsAnswer(many, 0).length, contract.segments.maxSegments);
+  assert.equal(segmentSkip([{ type: "recap", startMs: 0, endMs: 9000 }]), null);
+  // An ending that starts inside the opening is no ending.
+  assert.deepEqual(segmentSkip([{ type: "intro", startMs: 0, endMs: 90000 }, { type: "outro", startMs: 30000, endMs: 95000 }]), { openingStartMs: 0, openingEndMs: 90000, endingStartMs: null });
+});
+
+test("segments: run.mjs builds the app's query and prints what Kino keeps", () => {
+  assert.deepEqual(segmentsArg(["tt0133093", "8160000"]), { kind: "movie", ids: { imdb: "tt0133093" }, durationMs: 8160000 });
+  assert.deepEqual(segmentsArg(["tmdb:1396", "1", "2"]), { kind: "episode", ids: {}, show: { ids: { tmdb: 1396 } }, season: 1, episode: 2 });
+  assert.deepEqual(segmentsArg(["tmdb:1396", "1", "2", "2880000"]).durationMs, 2880000);
+  assert.throws(() => segmentsArg(["Breaking Bad"]));
+  const dir = mkdtempSync(join(tmpdir(), "kino-segments-"));
+  try {
+    writeFileSync(join(dir, "plugin.js"), "export async function segments(q){ return [{ type: 'intro', startMs: 1000, endMs: 61000, kind: q.kind }, { type: 'outro', startMs: q.durationMs - 1000, endMs: q.durationMs + 9000 }] }");
+    writeFileSync(join(dir, "kino-plugin.json"), manifest({ apiVersion: 7, capabilities: ["segments"], hosts: ["example.com"] }));
+    const r = spawnSync(process.execPath, [join(here, "..", "run.mjs"), dir, "segments", "tt0133093", "2000000"], { encoding: "utf8" });
+    assert.equal(r.status, 0, r.stderr);
+    assert.deepEqual(JSON.parse(r.stdout), [{ type: "intro", startMs: 1000, endMs: 61000 }]);
+    assert.match(r.stderr, /ends past the file's end/);
+    assert.match(r.stderr, /"openingEndMs":61000/);
+    const val = spawnSync(process.execPath, [join(here, "..", "validate.mjs"), dir], { encoding: "utf8" });
+    assert.equal(val.status, 0, val.stderr + val.stdout);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

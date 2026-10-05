@@ -1,8 +1,11 @@
 #!/usr/bin/env node
-// Regenerates the live channels' looping segments (media/live/canal-N/seg0.ts .. seg2.ts), which are
-// committed so server.mjs needs nothing but Node. Needs ffmpeg; run it only to change them:
+// Regenerates the live channels' looping segments (media/live/canal-N/seg0.ts .. seg2.ts) and the
+// signed video's (media/protegido/seg0.ts .. seg2.ts), which are committed so server.mjs needs nothing
+// but Node. Needs ffmpeg; run it only to change them:
 //
-//   node media/make-live.mjs
+//   node media/make-live.mjs                 every channel and the signed video
+//   node media/make-live.mjs canal-10        only those ids (ffmpeg's output is not byte-stable, so
+//                                            redrawing the others would change files nobody touched)
 //
 // Each channel is its own card from artwork.mjs (the channel's colour and name, "EN VIVO" on top)
 // with a white bar sweeping along the bottom so it visibly moves, and a tone of its own pitch, so
@@ -14,15 +17,21 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { artwork } from "../artwork.mjs";
-import { LIVE_CHANNELS, LIVE_SEGMENTS, LIVE_SEGMENT_SECONDS } from "../server.mjs";
+import { LIVE_CHANNELS, LIVE_SEGMENTS, LIVE_SEGMENT_SECONDS, SIGNED_VIDEO } from "../server.mjs";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const scratch = mkdtempSync(join(tmpdir(), "kino-live-"));
 try {
-  LIVE_CHANNELS.forEach(({ id, title }, i) => {
+  const only = process.argv.slice(2);
+  const all = [
+    ...LIVE_CHANNELS.map(({ id, title }) => ({ id, title, label: "En vivo", dir: join("live", id) })),
+    { ...SIGNED_VIDEO, dir: SIGNED_VIDEO.id },
+  ];
+  all.forEach(({ id, title, label, dir }, i) => {
+    if (only.length && !only.includes(id)) return;
     const card = join(scratch, id + ".png");
-    writeFileSync(card, artwork({ id, title, label: "En vivo", shape: "backdrop" }));
-    const out = join(here, "live", id);
+    writeFileSync(card, artwork({ id, title, label, shape: "backdrop" }));
+    const out = join(here, dir);
     mkdirSync(out, { recursive: true });
     const seconds = LIVE_SEGMENTS * LIVE_SEGMENT_SECONDS;
     execFileSync("ffmpeg", [

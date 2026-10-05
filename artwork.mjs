@@ -3,6 +3,7 @@
 //
 //   poster   300x450 (2:3)   -- the card of a movie, a season or a channel
 //   backdrop 480x270 (16:9)  -- the info page's background, and an episode's still
+//   logo     600x150         -- a clear-logo: the title alone, on a transparent background (meta's `logo`)
 //
 // Each image is a colour picked from the id (the same id always gets the same colour), a small
 // label on top ("PELICULA", "SERIE - TEMPORADA 2", "EPISODIO 3"...), the title in big letters and
@@ -14,6 +15,7 @@ import { deflateSync } from "node:zlib";
 export const SHAPES = {
   poster: { width: 300, height: 450 },
   backdrop: { width: 480, height: 270 },
+  logo: { width: 600, height: 150 },
 };
 
 // 5x7 glyphs, one number per row, the 5 low bits left to right.
@@ -39,6 +41,7 @@ const FONT = {
   ":": [0x00, 0x0c, 0x0c, 0x00, 0x0c, 0x0c, 0x00], ".": [0x00, 0x00, 0x00, 0x00, 0x00, 0x0c, 0x0c],
   "(": [0x02, 0x04, 0x08, 0x08, 0x08, 0x04, 0x02], ")": [0x08, 0x04, 0x02, 0x02, 0x02, 0x04, 0x08],
   "-": [0x00, 0x00, 0x00, 0x1f, 0x00, 0x00, 0x00], "?": [0x0e, 0x11, 0x01, 0x02, 0x04, 0x00, 0x04],
+  "+": [0x00, 0x04, 0x04, 0x1f, 0x04, 0x04, 0x00],
   " ": [0, 0, 0, 0, 0, 0, 0],
 };
 
@@ -61,16 +64,20 @@ function hsl(h, s, l) {
 }
 
 class Canvas {
-  constructor(width, height) {
+  // `alpha`: RGBA, every pixel transparent until drawn (a logo); otherwise plain RGB.
+  constructor(width, height, alpha = false) {
     this.width = width;
     this.height = height;
-    this.px = Buffer.alloc(width * height * 3);
+    this.channels = alpha ? 4 : 3;
+    this.px = Buffer.alloc(width * height * this.channels);
   }
   rect(x, y, w, h, [r, g, b]) {
+    const n = this.channels;
     for (let j = Math.max(0, y); j < Math.min(this.height, y + h); j++) {
       for (let i = Math.max(0, x); i < Math.min(this.width, x + w); i++) {
-        const o = (j * this.width + i) * 3;
+        const o = (j * this.width + i) * n;
         this.px[o] = r; this.px[o + 1] = g; this.px[o + 2] = b;
+        if (n === 4) this.px[o + 3] = 255;
       }
     }
   }
@@ -87,15 +94,16 @@ class Canvas {
     }
   }
   png() {
-    const raw = Buffer.alloc((this.width * 3 + 1) * this.height);
+    const row = this.width * this.channels;
+    const raw = Buffer.alloc((row + 1) * this.height);
     for (let j = 0; j < this.height; j++) {
-      raw[j * (this.width * 3 + 1)] = 0; // filter: none
-      this.px.copy(raw, j * (this.width * 3 + 1) + 1, j * this.width * 3, (j + 1) * this.width * 3);
+      raw[j * (row + 1)] = 0; // filter: none
+      this.px.copy(raw, j * (row + 1) + 1, j * row, (j + 1) * row);
     }
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(this.width, 0);
     ihdr.writeUInt32BE(this.height, 4);
-    ihdr.set([8, 2, 0, 0, 0], 8); // 8-bit RGB
+    ihdr.set([8, this.channels === 4 ? 6 : 2, 0, 0, 0], 8); // 8-bit RGB, or RGBA for a logo
     return Buffer.concat([
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
       chunk("IHDR", ihdr),
@@ -140,10 +148,28 @@ function wrap(text, maxChars) {
 }
 
 /**
+ * A clear-logo (the `logo` of a `meta()` answer, shown instead of the title's name on its info page):
+ * the title in the title's own pale colour with a dark outline, on a fully transparent background.
+ */
+export function logo({ id, title }) {
+  const { width, height } = SHAPES.logo;
+  const canvas = new Canvas(width, height, true);
+  const text = printable(title);
+  let scale = 8;
+  while (scale > 1 && (textWidth(text, scale) > width - 20 || 7 * scale > height - 20)) scale--;
+  const y = Math.round((height - 7 * scale) / 2);
+  const shadow = hsl(hue(id), 0.6, 0.15);
+  for (const [dx, dy] of [[-2, 0], [2, 0], [0, -2], [0, 2]]) canvas.text(text, width / 2 + dx, y + dy, scale, shadow);
+  canvas.text(text, width / 2, y, scale, hsl(hue(id), 0.7, 0.8));
+  return canvas.png();
+}
+
+/**
  * The PNG for one title. `id` picks the colour, `title` is drawn big, `label` small on top.
- * `shape` is "poster" or "backdrop".
+ * `shape` is "poster", "backdrop" or "logo" (then only `id` and `title` count).
  */
 export function artwork({ id, title, label, shape }) {
+  if (shape === "logo") return logo({ id, title });
   const { width, height } = SHAPES[shape];
   const canvas = new Canvas(width, height);
   const h = hue(id);

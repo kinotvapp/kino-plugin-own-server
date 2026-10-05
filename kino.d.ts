@@ -1,4 +1,4 @@
-// TypeScript declarations for Kino plugins (apiVersion 1 to 6; apiVersion 5 only adds the manifest's signature, 6 the plain-plugin SDK: typed and larger secrets, migrate, signed streams, the settings form, debug, telemetry, section, categories, theme and scopedSearch). Reference them from plugin.js
+// TypeScript declarations for Kino plugins (apiVersion 1 to 7; 7 adds tracking and segments; apiVersion 5 only adds the manifest's signature, 6 the plain-plugin SDK: typed and larger secrets, migrate, signed streams, the settings form, debug, telemetry, section, categories, theme and scopedSearch). Reference them from plugin.js
 // with `/// <reference path="./kino.d.ts" />` for editor help; Kino itself runs plain JavaScript.
 // The numbers in the comments come from contract.json, which is authoritative. The app checks that
 // every `kino` member declared here exists in its runtime and nothing else does (KinoDtsTest).
@@ -424,16 +424,88 @@ interface KinoSubtitleTrack { lang: string; url: string; format?: "vtt" | "srt";
 type KinoSubtitlesFn = (arg: {
   imdbId?: string; tmdbId?: number; kind: "movie" | "series"; season?: number; episode?: number;
   title?: string; year?: number; languages: string[];
+  /**
+   * The file playing (Kino 0.9.51+), only what is known, absent when nothing is; never its URL. `hash`: the 16-hex
+   * OpenSubtitles hash and `size` the bytes it was computed with; `name`: the file name with its extension.
+   */
+  file?: { hash?: string; size?: number; name?: string };
 }) => Promise<KinoSubtitleTrack[]>;
 
-/** A plugin that plays (`resolve` required, as above), optionally finding subtitles too. */
-interface KinoPlayingPlugin extends KinoPlugin { subtitles?: KinoSubtitlesFn }
+/** Ids a tracking event carries, each only when known. */
+interface KinoTrackingIds { imdb?: string; tmdb?: number; tvdb?: number; anilist?: number; mal?: number }
 
-/** A subtitle provider: capabilities exactly ["subtitles"], so `subtitles` is its only export. */
-interface KinoSubtitleProvider { subtitles: KinoSubtitlesFn }
+/**
+ * `track(event)`'s argument (apiVersion 7, the "tracking" capability): what the person plays on this device. For a movie
+ * `ids` are the movie's; for an episode `ids` are the EPISODE's own (may be `{}`) and the show's are in `show.ids` -- never
+ * use the show's ids as the episode's. `watched` fires once, with 3 minutes or less left and at least 90% played.
+ */
+interface KinoTrackingEvent {
+  /** Stable across retries of this event: the idempotency key. */
+  id: string;
+  type: "start" | "progress" | "stop" | "watched";
+  /** When it happened on the device, epoch ms. */
+  at: number;
+  kind: "movie" | "episode";
+  ids: KinoTrackingIds;
+  /** A movie's name, or an episode's own name when TMDB has one. */
+  title?: string;
+  year?: number;
+  show?: { title: string; year?: number; ids: KinoTrackingIds };
+  season?: number;
+  episode?: number;
+  positionMs?: number;
+  durationMs?: number;
+  /** positionMs / durationMs, 0..1. */
+  progress?: number;
+  /** A `progress` sent because the person paused. */
+  paused?: true;
+}
 
-/** Your module's exports: one or the other. */
-type KinoPluginModule = KinoPlayingPlugin | KinoSubtitleProvider;
+/**
+ * `track` -- required with the capability "tracking" (apiVersion 7). Return anything (`{ ok: true }`) when delivered; throw
+ * `kino.error(code)` otherwise: `timeout`/`network`/`unavailable`/`rate_limited` retry later (in order, with backoff),
+ * `auth_required`/`invalid_request`/`not_found`/`geo_blocked`/`host_not_allowed`/`too_large` drop the event. 10 s, a
+ * background call.
+ */
+type KinoTrackFn = (event: KinoTrackingEvent) => Promise<unknown>;
+
+/**
+ * `segments(query)`'s argument (apiVersion 7, the "segments" capability): the title that started playing. For a movie `ids`
+ * are the movie's; for an episode `ids` are the EPISODE's own (maybe `{}`) and the show's are in `show.ids`.
+ */
+interface KinoSegmentsQuery {
+  kind: "movie" | "episode";
+  ids: KinoTrackingIds;
+  show?: { ids: KinoTrackingIds };
+  season?: number;
+  episode?: number;
+  /** The playing file's length: answer for that cut. */
+  durationMs?: number;
+}
+
+/** One segment of the file, in whole ms. Kino uses `intro` and the first `outro`/`credits`; `recap` and `preview` have no button yet. */
+interface KinoSegment { type: "intro" | "outro" | "recap" | "credits" | "preview"; startMs: number; endMs: number }
+
+/**
+ * `segments` -- required with the capability "segments" (apiVersion 7). Each bad entry is dropped on its own (unknown type,
+ * not whole ms, under 1 s, past the file's end, overlapping one of its type); 10 kept. 8 s, a background call.
+ */
+type KinoSegmentsFn = (query: KinoSegmentsQuery) => Promise<KinoSegment[] | null>;
+
+/** A plugin that plays (`resolve` required, as above), optionally finding subtitles, tracking or segments too. */
+interface KinoPlayingPlugin extends KinoPlugin { subtitles?: KinoSubtitlesFn; track?: KinoTrackFn; segments?: KinoSegmentsFn }
+
+/** A subtitle provider: capabilities only "subtitles" (and maybe "tracking" or "segments"), so `subtitles` is its export. */
+interface KinoSubtitleProvider { subtitles: KinoSubtitlesFn; track?: KinoTrackFn; segments?: KinoSegmentsFn }
+
+/** A tracker: capabilities only "tracking" (and maybe "subtitles" or "segments"). */
+interface KinoTracker { track: KinoTrackFn; subtitles?: KinoSubtitlesFn; segments?: KinoSegmentsFn }
+
+/** A segment source: capabilities only "segments" (and maybe "subtitles" or "tracking"). */
+interface KinoSegmentSource { segments: KinoSegmentsFn; subtitles?: KinoSubtitlesFn; track?: KinoTrackFn }
+
+/** Your module's exports: one of these. */
+type KinoPluginModule = KinoPlayingPlugin | KinoSubtitleProvider | KinoTracker | KinoSegmentSource;
 
 // ---------- the kino API ----------
 
@@ -556,13 +628,13 @@ interface KinoBrowserCapture {
 /** apiVersion 6, `"browser": "pages"`: `kino.browser.page` options. */
 interface KinoBrowserPageOptions {
   /**
-   * 1..25000 ms; default 15000. Counts inside your call's own time limit, which ends the read when it runs out: pass
-   * less than what is left of it (about 12000 in `search`, whose whole call has 15 s; about 16000 in the 20 s exports).
+   * 1..25000 ms; default 15000. Counts inside your call's own time limit; Kino cuts it to what is left of that limit
+   * minus 1.5 s. Pass about 12000 in `search` (15 s for the whole call).
    */
   timeoutMs?: number;
   /**
-   * A JavaScript regular expression (source string or RegExp; matched case-insensitively against the page's HTML, up
-   * to 500 characters): the page is returned only once it matches. Without it, as soon as the page is loaded and is no
+   * A JavaScript regular expression (source string or RegExp, whose `m` and `s` flags are kept; matched
+   * case-insensitively against the page's HTML, up to 500 characters): the page is returned only once it matches. Without it, as soon as the page is loaded and is no
    * longer the site's browser check page. Use it for pages that fill in their list with scripts.
    */
   waitFor?: string | RegExp;
@@ -615,11 +687,12 @@ declare namespace kino {
     /**
      * apiVersion 6, with `"browser": "pages"` in the manifest (`true` is capture-only and answers `not_allowed` here; the
      * person approves "Puede abrir páginas web ocultas para mostrar contenido y
-     * encontrar el video", in red): from `search`, `home`, `browse`, `episodes`, `section`, `categories` or `resolve`, only
+     * encontrar el video", in red): from `search`, `home`, `browse`, `episodes`, `section` or `resolve`, only
      * while the person is using the app (never a background call), loads `url` in the same hidden web view and returns its
      * HTML once the page is past the site's automatic browser check (Cloudflare's "Just a moment…") and matches `waitFor`.
      * Kino never clicks, taps, types or scrolls in it and never solves a captcha: a page that asks for a human answers
-     * `blocked` at once, and one still on its check page when the time runs out answers `blocked` too. Same start-host
+     * `blocked` at once, and one still on its check page when the time runs out answers `blocked` too. The top document
+     * must stay on your hosts: a redirect or navigation elsewhere answers `blocked`, never that site's HTML. Same start-host
      * rule, same one page at a time, fresh cookies per call; at most 20 page reads per minute per plugin. Throws a typed
      * error: `browser_unavailable` (always under the Node kit: keep a plain `kino.fetch` path), `timeout`, `blocked`,
      * `busy` (another page is open, or the person pressed play and the read was ended), `not_allowed`, `rate_limited`,
@@ -634,7 +707,7 @@ declare namespace kino {
   /** Writes to Kino's log (and console.* does the same); lines are cut at 2000 characters. When a call of a plugin whose manifest says `"telemetry": true` or `"verbose"` (apiVersion 6) fails (a plugin that does not declare it never sends a line; a later Kino build adds a per-device "Enviar registros de errores" switch, on by default, that stops them) (sign and the settings exports included), the last 30 lines it logged (cut at 300 characters, scrubbed of URLs, hosts, ids, secrets and the person's text, 2 KB in all) go with the failure report; never for a call that succeeds. Log what happened, never what the person typed. */
   function log(...args: unknown[]): void;
   namespace log {
-    /** apiVersion 6, with `"telemetry": true`: a log line that also tells Kino's error tracker your plugin served a degraded result (a fallback account, a backup source). The line's first word is its area (`[a-z0-9_:]`, with a `_` or `:`, up to 24 characters; anything else is filed as "other"); at most one report per area an hour and 3 per plugin per session, scrubbed like any line. Without telemetry (or, once the per-device switch exists, with it off) it is only a log line. With `"telemetry": "verbose"` a plugin's playback metrics, live/cast problems and edge cases also reach the board (see the README). In a debug build, or with `"debug": true`, every line is in logcat under `KinoPlugin/<id>` and Kino's playback lines under `KinoPlay`. */
+    /** apiVersion 6, with `"telemetry": true`: a log line that also tells Kino's error tracker your plugin served a degraded result (a fallback account, a backup source). The line's first word is its area (`[a-z0-9_:]`, with a `_` or `:`, up to 24 characters; anything else is filed as "other"); at most one report per area an hour and 3 per plugin per session, scrubbed like any line. Without telemetry (or, once the per-device switch exists, with it off) it is only a log line. With `"telemetry": "verbose"` a plugin's playback metrics, live/cast problems and edge cases also reach the board (see the README). In a debug build, or while the plugin's "Modo debug" switch is on (every plugin has one in Ajustes; `"debug": true` only makes it on by default), every line is in logcat under `KinoPlugin/<id>` and Kino's playback lines under `KinoPlay`. */
     function report(...args: unknown[]): void;
   }
 
@@ -766,4 +839,10 @@ interface KinoTitleMeta {
   genres?: string[];
   runtimeMinutes?: number;
   episodes?: { season: number; number: number; title?: string; overview?: string; still?: string; airDate?: string; id?: string }[];
+  /** Kino 0.9.51+: a clear-logo of the title, shown instead of its name on the info page. */
+  logo?: string;
+  /** Kino 0.9.51+: at most 6, one per source; added to the page's score, never replacing it. */
+  ratings?: { source: "imdb" | "tmdb" | "rottentomatoes" | "metacritic" | "letterboxd" | "mal" | "anilist" | "trakt"; value: string | number }[];
+  /** Kino 0.9.51+: at most 20; shown only when TMDB has no cast for the title. */
+  cast?: { name: string; character?: string; photo?: string }[];
 }

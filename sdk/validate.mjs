@@ -50,6 +50,10 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   if (m.capabilities.includes("channels")) line("Agrega canales en vivo a la pestaña En vivo");
   if (m.capabilities.includes("migrate")) line("Revisar lo que tienes guardado (biblioteca, historial, favoritos) para pasarlo a este plugin");
   if (m.capabilities.includes("subtitles")) line("Agrega subtítulos a tus películas y series");
+  // apiVersion 7 "tracking": in red, the plugin's declared hosts named (PluginConsent / Tracking.consentLine).
+  if (m.capabilities.includes(contract.tracking.capability)) line(trackingConsentLine(m.hosts || []), true);
+  // apiVersion 7 "segments": a plain line, not red (it only learns which title plays): PluginConsent / Segments.CONSENT_LINE.
+  if (m.capabilities.includes(contract.segments.capability)) line(contract.segments.consentLine);
   if (m.secrets && Object.keys(m.secrets).length) line("Usa datos sellados por su autor");
   if (m.telemetry) line(m.telemetry === contract.manifest.telemetry.verbose.value ? contract.manifest.telemetry.verbose.consentLine : contract.manifest.telemetry.consentLine);
   if (authorFingerprint) line(contract.manifest.signature.consentLine);
@@ -59,12 +63,21 @@ export function consentLines(m, { authorFingerprint = null } = {}) {
   // "browser": "pages" also reads pages (kino.browser.page): PluginConsent.BROWSER_PAGE_LINE (manifest.browser.pageConsentLine).
   if (m.browser) line(m.browserPages ? contract.manifest.browser.pageConsentLine : contract.manifest.browser.consentLine, true);
   if (m.streamHostsAny) {
-    const onlySubtitles = m.capabilities.length === 1 && m.capabilities[0] === "subtitles";
+    const onlySubtitles = m.capabilities.includes("subtitles") && m.capabilities.every((c) => contract.capabilities.standalone.includes(c));
     line(onlySubtitles ? "Puede traer subtítulos desde cualquier servidor que indique"
       : m.capabilities.includes("subtitles") ? "Puede reproducir video y traer subtítulos desde cualquier servidor que indique"
       : "Puede reproducir video desde cualquier servidor que indique", true);
   }
   return out;
+}
+
+/** The tracking consent line for [hosts], as the app's Tracking.consentLine builds it (`.invalid` placeholders left out). */
+export function trackingConsentLine(hosts) {
+  const named = hosts.map((h) => (typeof h === "string" ? h : h.host)).filter((h) => h && !h.toLowerCase().endsWith(".invalid") && h.toLowerCase() !== "invalid");
+  if (!named.length) return contract.tracking.consentLineNoHosts;
+  const max = contract.tracking.consentMaxHosts;
+  const rest = named.length - max;
+  return contract.tracking.consentLine.replace("{hosts}", named.slice(0, max).join(", ") + (rest > 0 ? ` y ${rest} más` : ""));
 }
 
 /** Files of [dir]'s git repository, among [paths], that git tracks (none when [dir] is not in a repository). */
@@ -101,7 +114,8 @@ export async function validate(dirArg, { run = null, args = [], config = {}, rep
   const notes = [];
   let authorFingerprint = null;
   if (!m.discoverable) notes.push("No aparecerá en la búsqueda de Kino");
-  if (m.debug) notes.push('Modo debug activo ("debug": true): úsalo mientras desarrollas y quítalo antes de publicar el plugin');
+  // "debug": true only turns every person's "Modo debug" switch on by default (Kino 0.9.50): the author is told what that means.
+  if (m.debug) notes.push(contract.manifest.debug.defaultOnNote);
   if (m.theme && Object.keys(m.theme).length) for (const w of resolvePalette(m.theme).warnings) notes.push(w);
   // Accepted from Kino 0.9.45 on; older apps still refuse the install, so the author is told. They
   // counted the raw entries (duplicates too), so this does as well.
