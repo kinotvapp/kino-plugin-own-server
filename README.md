@@ -395,11 +395,9 @@ byte-stable.
 To try the server while another copy is already running, start it on another port:
 `node server.mjs --port 8123`.
 
-`sdk/`, `contract.json`, `kino.d.ts` and `GUIDE.md` are a copy of Kino's plugin kit (apiVersion 7, Kino 0.9.51);
+`sdk/`, `contract.json`, `kino.d.ts` and `GUIDE.md` are a copy of Kino's plugin kit (apiVersion 14, Kino 0.9.74);
 `sdk/kino-rank.mjs` is the same ranking code the app runs, and `sdk/live-playlist.mjs` the same M3U
-and XMLTV rules. Two local differences: `sdk/test/kit.test.mjs` looks for the example plugin at this
-repository's root, and `sdk/contract.mjs` allows a `section` setting's hint up to 300 characters
-(`sectionHintMaxChars`), as the app does, where the kit still applied the 80 of every other hint.
+and XMLTV rules. One local difference: the tests in `sdk/test/` that read files of Kino's own repository (its docs and `plugins/archive-org`) are skipped here.
 
 ## License
 
