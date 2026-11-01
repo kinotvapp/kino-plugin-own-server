@@ -102,7 +102,7 @@ test("the manifest is apiVersion 7, declares no host of its own and asks for eac
     ["Agrega subtítulos a tus películas y series", false],
     ["Le contará al servidor que escribas en su configuración qué ves y cuándo lo terminas", true],
     ["Agrega el botón para saltar la intro y los créditos", false],
-    ["Comparte registros de errores con Kino para corregir fallas", false],
+    ["Comparte con Kino registros de errores y datos técnicos de algunas reproducciones para corregir fallas", false],
   ]);
 });
 
